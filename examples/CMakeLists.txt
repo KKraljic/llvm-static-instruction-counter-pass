@@ -5,5 +5,5 @@ add_executable(example)
 
 target_sources(example
   PRIVATE
-    example.cpp
+        example.cpp
 )

@@ -60,6 +60,7 @@ struct CounterFunctionAnalysis
     Function *function;
     std::size_t fid;
     std::map<std::string, ExprHandle> instruction_costs{};
+    std::map<std::string, std::string> loop_bound_map{};
     std::map<Function *, ExprHandle>
         outgoing_calls_costs{}; // counts as both calls and invokes
     // std::map<Function *, ExprHandle> outgoing_invokes_costs{};
@@ -70,16 +71,49 @@ struct CounterFunctionAnalysis
   static AnalysisKey Key;
 
   using BlockToLoops = std::map<BasicBlock *, std::vector<Loop *>>;
-  using BoundsToLoops = std::map<std::string, std::vector<Loop *>>;
+
+  // In your header, change BoundsToLoops to key on the actual Value*
+  // instead of a string:
+  struct LoopBoundKey {
+    Value *initial;
+    Value *final_;   // this is your upper bound
+    Value *step;
+
+    bool operator<(const LoopBoundKey &o) const {
+      return std::tie(initial, final_, step)
+           < std::tie(o.initial, o.final_, o.step);
+    }
+  };
+
+  struct LoopBoundKeySCEV {
+    SCEV *start;
+    SCEV *step;   // this is your upper bound
+    SCEV *btc;
+
+    bool operator<(const LoopBoundKeySCEV &o) const {
+      return std::tie(start, step, btc)
+           < std::tie(o.start, o.step, o.btc);
+    }
+  };
+
+  using BoundsToLoops = std::map<LoopBoundKeySCEV, std::vector<Loop *>>;
+
+
+  //using BoundsToLoops = std::map<std::string, std::vector<Loop *>>;
 
   void createExpressionsForLoops(const BoundsToLoops &BoTL,
+                                  std::map<std::string, std::string> &loop_bound_map,
+                                  std::map<const SCEV*, std::unique_ptr<llvm::Module>> &loopNMap,
                                  const std::vector<Loop *> &unbounded_loops,
                                  std::map<Loop *, ExprHandle> &loop_exprs,
                                  Config &config);
 
-  void assignLoopsToLoopBounds(BoundsToLoops &BTL,
+  void assignLoopsToLoopBounds(BoundsToLoops &BTL, std::map<std::string, std::string> &loop_bound_map,
+                                std::map<const SCEV*, std::unique_ptr<llvm::Module>> &loopNMap,
                                std::vector<Loop *> &unbounded_loops, Loop *loop,
                                ScalarEvolution &SE);
+
+  Value *extractBoundFromExitCondition(Loop *loop);
 
   void assignLoopsToBasicBlocks(BlockToLoops &BTL, Loop *loop);
   void countInstructions(Result &result,
@@ -106,6 +140,7 @@ struct CounterModuleAnalysis : public AnalysisInfoMixin<CounterModuleAnalysis> {
     std::map<Function *, CounterFunctionAnalysis::Result,
              FunctionPointerComparator>
         function_results{};
+    std::map<std::string, std::string> loopBoundMap{};
   };
 
   Result run(Module &M, ModuleAnalysisManager &MAM);

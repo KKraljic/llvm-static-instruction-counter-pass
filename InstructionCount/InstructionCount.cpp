@@ -25,6 +25,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "llvm/IR/Module.h"
 
 using namespace llvm;
 
@@ -117,13 +118,40 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   }
 
   bool outputToCsv(Module &M, const CounterModuleAnalysis::Result &MR,
-                   Config &config, const std::string &energy_model_name) {
+
+  Config &config, const std::string &energy_model_name) {
     std::string output_str{};
     raw_string_ostream ostream{output_str};
 
+    llvm::outs() << "Output to csv2\n";
+
+    for (auto &[F, FR] : MR.function_results) {
+      if (F->getName() == "foo") {
+        for (auto &[key, value] : FR.instruction_costs) {
+          llvm::outs() << key << "\n";
+        }
+      }
+    }
+
     ostream << "Function Name,Demangled Name,fid,total";
     for (auto &inst : config.instructions_to_count) {
-      ostream << "," << inst;
+      std::string prefix = inst + "*";
+      outs() << "Checking instruction " << prefix << "\n";
+
+      for (auto &[F, FR] : MR.function_results) {
+        auto name = F->getName();
+        outs() << "Checking function : " << name << " against prefix: " + prefix + "\n";
+
+        for (auto it = FR.instruction_costs.lower_bound(prefix); it != FR.instruction_costs.end(); ++it) {
+          if (it->first.rfind(prefix, 0) != 0) break; // stop when prefix no longer matches
+          // it->first and it->second are your key/value
+
+          std::string instKey = it->first;
+          outs() << "Add Instruction to output: " << prefix << " - " << instKey << "\n";
+
+          ostream << "," << instKey;
+        }
+      }
     }
     ostream << "\n";
 
@@ -132,7 +160,10 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
       total_costs[F] = constant(0);
     }
     for (auto &[F, FR] : MR.function_results) {
+      auto name = F->getName();
+      outs() << "Checking function : " << name << "\n";
       for (auto &[_, cost] : FR.instruction_costs) {
+        outs() << "Adding to total costs: " << toString(cost) << "\n";
         total_costs[F] = add({total_costs[F], cost});
       }
     }
@@ -149,16 +180,35 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
       ostream << "," << total_costs[function];
 
       for (auto &inst : config.instructions_to_count) {
-        ExprHandle expr;
-        if (FR.instruction_costs.count(inst)) {
-          expr = mul({FR.instruction_costs.at(inst),
-                      constant(config.energy_model[energy_model_name][inst])});
-        } else {
-          expr = constant(0);
+        std::string prefix = inst + "*";
+
+        for (auto it = FR.instruction_costs.lower_bound(prefix); it != FR.instruction_costs.end(); ++it) {
+          if (it->first.rfind(prefix, 0) != 0) break; // stop when prefix no longer matches
+          // it->first and it->second are your key/value
+          std::string instKey = it->first;
+
+          size_t inst_cnt = FR.instruction_costs.count(instKey);
+          outs() << "Add for Inst : " << instKey << " cnt: " <<inst_cnt << "\n";
+
+          ExprHandle expr;
+          if (FR.instruction_costs.count(instKey)) {
+            size_t energy_model = config.energy_model[energy_model_name][inst];
+            if (!energy_model) energy_model = 1;
+            outs() << "Energy Model: " << energy_model << "\n";
+            expr = mul({FR.instruction_costs.at(instKey),
+                        constant(energy_model)});
+          } else {
+            expr = constant(0);
+          }
+          ostream << "," << expr;
         }
-        ostream << "," << expr;
       }
       ostream << "\n";
+
+
+      for (auto &[key, bound] : FR.loop_bound_map) {
+        ostream << key << "=" << bound << "\n";
+      }
     }
 
     std::filesystem::path file_path("./output");
@@ -166,7 +216,7 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
     std::string output_filename;
     raw_string_ostream ofn(output_filename);
     std::filesystem::path source_file_path = M.getSourceFileName();
-    ofn << source_file_path.filename() << "-" << M.getTargetTriple().getTriple()
+    ofn << source_file_path.filename() << "-" << M.getTargetTriple()
         << "-" << energy_model_name << ".csv";
 
     auto icconfigdir_result = std::getenv("IC_OUTPUT_DIR");
@@ -215,14 +265,14 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
       exit(0);
     }
 
-    auto &triple = M.getTargetTriple();
+    llvm::Triple triple(M.getTargetTriple());
     if (!config.isTargetValid(triple)) {
       if (config.verbose)
         errs() << "Skipping non-device module\n";
       return PreservedAnalyses::all();
     }
     if (config.verbose) {
-      errs() << "Analysing a Module with Target Triple: " << triple.getTriple()
+      errs() << "Analysing a Module with Target Triple: " << triple.str()
              << "\n";
     }
 
@@ -267,16 +317,8 @@ void registerPassBuilderCallbacks(llvm::PassBuilder &PB) {
         return false;
       });
   PB.registerOptimizerLastEPCallback([](llvm::ModulePassManager &MPM,
-                                        llvm::OptimizationLevel Level,
-                                        llvm::ThinOrFullLTOPhase TOF) {
-    // FunctionPassManager FPM;
-    // FPM.addPass(InstructionCount());
-
-    if (TOF == llvm::ThinOrFullLTOPhase::None ||
-        TOF == llvm::ThinOrFullLTOPhase::ThinLTOPostLink ||
-        TOF == llvm::ThinOrFullLTOPhase::FullLTOPostLink) {
+                                        llvm::OptimizationLevel Level) {
       MPM.addPass(InstructionCount());
-    }
   });
 }
 
