@@ -122,6 +122,8 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   Config &config, const std::string &energy_model_name) {
     std::string output_str{};
     raw_string_ostream ostream{output_str};
+    std::string var_str{};
+    raw_string_ostream ostream_var{var_str};
 
     llvm::outs() << "Output to csv2\n";
 
@@ -132,6 +134,8 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
         }
       }
     }
+
+    llvm::SmallVector<std::string> headerInsts{};
 
     ostream << "Function Name,Demangled Name,fid,total";
     for (auto &inst : config.instructions_to_count) {
@@ -147,9 +151,13 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
           // it->first and it->second are your key/value
 
           std::string instKey = it->first;
-          outs() << "Add Instruction to output: " << prefix << " - " << instKey << "\n";
 
-          ostream << "," << instKey;
+          if (!llvm::is_contained(headerInsts, instKey)) {
+            headerInsts.push_back(instKey);
+            outs() << "Add Instruction to output: " << prefix << " - " << instKey << "\n";
+
+            ostream << "," << instKey;
+          }
         }
       }
     }
@@ -162,8 +170,8 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
     for (auto &[F, FR] : MR.function_results) {
       auto name = F->getName();
       outs() << "Checking function : " << name << "\n";
-      for (auto &[_, cost] : FR.instruction_costs) {
-        outs() << "Adding to total costs: " << toString(cost) << "\n";
+      for (auto &[key, cost] : FR.instruction_costs) {
+        outs() << "Adding to total costs (" << key << "): " << toString(cost) << "\n";
         total_costs[F] = add({total_costs[F], cost});
       }
     }
@@ -172,6 +180,8 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
       if (function->isDeclaration())
         continue;
 
+      outs() << "Adding values for function: " << function->getName() << "\n";
+
       // Name
       const auto name = function->getName();
       ostream << name;
@@ -179,35 +189,34 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
       ostream << ",f" << FR.fid;
       ostream << "," << total_costs[function];
 
-      for (auto &inst : config.instructions_to_count) {
-        std::string prefix = inst + "*";
+      for (auto &inst : headerInsts) {
+        size_t pos = inst.find('*');
 
-        for (auto it = FR.instruction_costs.lower_bound(prefix); it != FR.instruction_costs.end(); ++it) {
-          if (it->first.rfind(prefix, 0) != 0) break; // stop when prefix no longer matches
-          // it->first and it->second are your key/value
-          std::string instKey = it->first;
-
-          size_t inst_cnt = FR.instruction_costs.count(instKey);
-          outs() << "Add for Inst : " << instKey << " cnt: " <<inst_cnt << "\n";
-
-          ExprHandle expr;
-          if (FR.instruction_costs.count(instKey)) {
-            size_t energy_model = config.energy_model[energy_model_name][inst];
-            if (!energy_model) energy_model = 1;
-            outs() << "Energy Model: " << energy_model << "\n";
-            expr = mul({FR.instruction_costs.at(instKey),
-                        constant(energy_model)});
-          } else {
-            expr = constant(0);
-          }
-          ostream << "," << expr;
+        if (pos == std::string::npos) {
+          // no '*'
+          continue;
         }
+
+        std::string key1 = inst.substr(0, pos);
+        std::string key2 = inst.substr(pos + 1);
+
+        ExprHandle expr;
+        if (FR.instruction_costs.find(inst) == FR.instruction_costs.end()) {
+          expr = constant(0);
+        } else {
+          size_t energy_model = config.energy_model[energy_model_name][inst];
+          if (!energy_model) energy_model = 1;
+          outs() << "Energy Model: " << energy_model << "\n";
+          expr = mul({FR.instruction_costs.at(inst),
+                      constant(energy_model)});
+        }
+        ostream << "," << expr;
       }
       ostream << "\n";
 
 
       for (auto &[key, bound] : FR.loop_bound_map) {
-        ostream << key << "=" << bound << "\n";
+        ostream_var << key << "=" << bound << "\n";
       }
     }
 
@@ -247,6 +256,7 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
     // csv_file << str << "\n";
 
     csv_file << output_str;
+    csv_file << var_str;
     csv_file.close();
     return true;
   }

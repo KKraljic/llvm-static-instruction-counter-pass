@@ -1,12 +1,14 @@
 instructions_to_count:
 # - mul
 # - div
-# - add
+- add
 # - sub
 - fmul
 - fdiv
 - fadd
 - fsub
+- __nv_sinf
+- __nv_cosf
 - llvm.nvvm.fma.rn.d
 - llvm.nvvm.mul.rn.d
 - llvm.nvvm.sqrt.rn.d
