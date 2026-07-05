@@ -317,6 +317,7 @@ Function *buildSCEVFunction(LLVMContext &Ctx, ScalarEvolution &SE,
 
   // Standard C main: int main(int argc, char **argv)
   Type *I32 = Type::getInt32Ty(Ctx);
+  Type *I64 = Type::getInt64Ty(Ctx);
   Type *I8Ptr = PointerType::getUnqual(Ctx);
   Type *I8PtrPtr = PointerType::getUnqual(Ctx);
 
@@ -336,17 +337,32 @@ Function *buildSCEVFunction(LLVMContext &Ctx, ScalarEvolution &SE,
                                  ConstantInt::get(I32, 1), "argv1ptr");
   Value *Argv1 = B.CreateLoad(I8Ptr, Argv1Ptr, "argv1");
 
-  // Call atoi(argv[1]) to parse the string to int
-  FunctionCallee Atoi = NewM.getOrInsertFunction(
-      "atoi", FunctionType::get(I32, {I8Ptr}, false));
-  Value *N = B.CreateCall(Atoi, {Argv1}, "n");
+  Value *Result;
+  if (SCEVFn->arg_size() > 0) {
+    Type *ParamTy = SCEVFn->getArg(0)->getType();
 
-  // Cast to SCEVFn's param type if needed
-  Type *ParamTy = SCEVFn->getArg(0)->getType();
-  Value *Casted = B.CreateIntCast(N, ParamTy, true, "casted");
+    // Call atoi(argv[1]) to parse the string to int
+    FunctionCallee toIntegerType;
+    if (ParamTy->isIntegerTy() && ParamTy->getIntegerBitWidth() == 32) {
+      toIntegerType = NewM.getOrInsertFunction(
+        "atoi", FunctionType::get(I32, {I8Ptr}, false));
+    } else if (ParamTy->isIntegerTy() && ParamTy->getIntegerBitWidth() == 64) {
+      toIntegerType = NewM.getOrInsertFunction(
+       "atoll", FunctionType::get(I64, {I8Ptr}, false));
+    } else {
+      //default to 32-bit
+      toIntegerType = NewM.getOrInsertFunction("atoi", FunctionType::get(I32, {I8Ptr}, false));
+    }
+    Value *N = B.CreateCall(toIntegerType, {Argv1}, "n");
 
-  // Call scev_eval
-  Value *Result = B.CreateCall(SCEVFn, {Casted}, "result");
+    // Cast to SCEVFn's param type if needed
+    Value *Casted = B.CreateIntCast(N, ParamTy, true, "casted");
+
+    // Call scev_eval
+    Result = B.CreateCall(SCEVFn, {Casted}, "result");
+  } else {
+    Result = B.CreateCall(SCEVFn, {}, "result");
+  }
   Value *Ret = B.CreateIntCast(Result, I32, true, "ret");
   B.CreateRet(Ret);
 
@@ -464,7 +480,7 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
     for (auto loop : loops) {
       loop_exprs[loop] = loop_expr;
       if (config.verbose)
-        errs() << "Added " << loop_exprs[loop] << " to a loop\n";
+        outs() << "Added " << loop_exprs[loop] << " to a loop\n";
     }
   }
 
@@ -629,14 +645,25 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
       return;
   }
 
+
+  Type *IVTy  = Step->getType();
+  Type *BTCTy = BTC->getType();
+
+  // Decide which is wider
+  Type *WideTy = (BTCTy->getIntegerBitWidth() > IVTy->getIntegerBitWidth())
+               ? BTCTy : IVTy;
+  const SCEV *WideStart = SE.getNoopOrSignExtend(Start, WideTy);
+  const SCEV *WideStep  = SE.getNoopOrSignExtend(Step,  WideTy);
+  const SCEV *WideBTC   = SE.getNoopOrZeroExtend(BTC,   WideTy);
+
   // ------------------------------------------------------------
   // Construct "last value" of the IV.
   // final = Start + Step * BTC
   // ------------------------------------------------------------
   const SCEV *Final =
       SE.getAddExpr(
-          Start,
-          SE.getMulExpr(Step, BTC));
+          WideStart,
+          SE.getMulExpr(WideStep, WideBTC));
 
   llvm::LLVMContext& Ctx = header->getContext();
   auto NewM = std::make_unique<Module>("scev_module", Ctx);
@@ -661,7 +688,7 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
   Function *scevF = buildSCEVFunction(Ctx, SE, BTC, header->getModule(), NewM.get());
 
   // Add main calling scev_eval with n=100
-  addMainWrapper(*NewM, scevF);
+  //addMainWrapper(*NewM, scevF);
 
   errs() << "=== Full Module ===\n";
   NewM->print(errs(), nullptr);
