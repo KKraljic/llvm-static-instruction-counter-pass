@@ -1,5 +1,6 @@
 #include "Expression.hpp"
 #include "ICAnalyses.hpp"
+#include "ProtoTransform.hpp"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -25,7 +26,11 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <google/protobuf/util/json_util.h>
+
 #include "llvm/IR/Module.h"
+
+#include "interface.pb.h"
 
 using namespace llvm;
 
@@ -117,6 +122,128 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
     }
   }
 
+	bool outputToJson(Module &M, const CounterModuleAnalysis::Result &MR,
+	Config &config, const std::string &energy_model_name) {
+	  energy_estimation::Report report;
+  	std::cout << "report" << std::endl;
+
+
+  	llvm::SmallVector<std::string> headerInsts{};
+
+  	for (auto &inst : config.instructions_to_count) {
+  		std::string prefix = inst + "*";
+  		outs() << "Checking instruction " << prefix << "\n";
+
+  		for (auto &[F, FR] : MR.function_results) {
+  			auto name = F->getName();
+  			outs() << "Checking function : " << name << " against prefix: " + prefix + "\n";
+
+  			for (auto it = FR.instruction_costs.lower_bound(prefix); it != FR.instruction_costs.end(); ++it) {
+  				if (it->first.rfind(prefix, 0) != 0) break;
+
+  				std::string instKey = it->first;
+
+  				if (!llvm::is_contained(headerInsts, instKey)) {
+  					headerInsts.push_back(instKey);
+  					outs() << "Add Instruction to output: " << prefix << " - " << instKey << "\n";
+  				}
+  			}
+  		}
+  	}
+
+
+
+  	auto *functions = report.mutable_functions();
+  	for (auto &[function, FR] : MR.function_results) {
+  		if (function->isDeclaration())
+  			continue;
+
+  		for (auto &[key, bound] : FR.loop_bound_map) {
+  			report.mutable_variables()->insert({key, bound});
+  		}
+
+  		energy_estimation::Function FunctionInfo;
+  		FunctionInfo.set_name(function->getName().str());
+  		FunctionInfo.set_demangled(demangle(function->getName()));
+
+
+  		for (auto &inst : headerInsts) {
+  			size_t pos = inst.find('*');
+
+  			if (pos == std::string::npos) {
+  				continue;
+  			}
+
+  			energy_estimation::InstructionCount* entry = FunctionInfo.add_count();
+
+  			std::string key1 = inst.substr(0, pos);
+  			std::string key2 = inst.substr(pos + 1);
+
+  			energy_estimation::ValueType type = ProtoTransform::typeToProto(key2);
+  			llvm::outs() << ValueType_Name(type).c_str() << "\n";
+  			entry->set_type(type);
+  			entry->set_instruction(ProtoTransform::instToProto(key1));
+
+  			ExprHandle expr;
+  			if (FR.instruction_costs.find(inst) == FR.instruction_costs.end()) {
+  				expr = constant(0);
+  			} else {
+  				size_t energy_model = config.energy_model[energy_model_name][inst];
+  				if (!energy_model) energy_model = 1;
+  				outs() << "Energy Model: " << energy_model << "\n";
+  				expr = mul({FR.instruction_costs.at(inst),
+											constant(energy_model)});
+  			}
+
+  			entry->set_expression(toString(expr));
+  		}
+
+  		(*functions)[FR.fid]  = FunctionInfo;
+  	}
+
+  	std::string json_output;
+  	google::protobuf::util::JsonPrintOptions options;
+  	options.add_whitespace = true;        // pretty-print with indentation
+  	options.always_print_primitive_fields = true; // include fields even if default/empty
+  	options.preserve_proto_field_names = true;    // use proto field names (snake_case)
+
+  	auto status = google::protobuf::util::MessageToJsonString(report, &json_output, options);
+  	if (!status.ok()) {
+  		std::cerr << "Failed to convert to JSON: " << status.ToString() << std::endl;
+  		return 1;
+  	}
+
+  	std::filesystem::path file_path("./output");
+
+  	std::string output_filename;
+  	raw_string_ostream ofn(output_filename);
+  	std::filesystem::path source_file_path = M.getSourceFileName();
+  	ofn << source_file_path.filename() << "-" << M.getTargetTriple()
+				<< "-" << energy_model_name << ".json";
+
+  	auto icconfigdir_result = std::getenv("IC_OUTPUT_DIR");
+  	if (icconfigdir_result) {
+  		file_path = icconfigdir_result;
+  	}
+  	if (!std::filesystem::exists(file_path)) {
+  		if (!std::filesystem::create_directories(file_path)) {
+  			errs() << "Could not create parent directories of path " << file_path
+							 << "\n";
+  			return false;
+  		};
+  	}
+  	file_path /= output_filename;
+
+  	std::ofstream out_file(file_path);
+  	if (!out_file) {
+  		std::cerr << "Failed to open output file" << std::endl;
+  		return 1;
+  	}
+  	out_file << json_output;
+  	out_file.close();
+  	return true;
+  }
+
   bool outputToCsv(Module &M, const CounterModuleAnalysis::Result &MR,
 
   Config &config, const std::string &energy_model_name) {
@@ -163,7 +290,7 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
     }
     ostream << "\n";
 
-    std::map<Function *, ExprHandle> total_costs;
+    std::map<llvm::Function *, ExprHandle> total_costs;
     for (auto &[F, _] : MR.function_results) {
       total_costs[F] = constant(0);
     }
@@ -296,7 +423,7 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
     auto MR = MAM.getResult<CounterModuleAnalysis>(M);
 
     for (auto &[energy_model_name, _] : config.energy_model)
-      if (!outputToCsv(M, MR, config, energy_model_name)) {
+      if (!outputToJson(M, MR, config, energy_model_name)) {
         errs() << "Exiting Pass Early\n";
         return PreservedAnalyses::all();
       }

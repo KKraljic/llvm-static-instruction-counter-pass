@@ -24,6 +24,8 @@ endif()
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
+find_package(Protobuf REQUIRED)
+
 #===============================================================================
 # 2. LLVM-TUTOR BUILD CONFIGURATION
 #===============================================================================
@@ -46,9 +48,24 @@ llvm_map_components_to_libnames(LLVM_LIBS
 #===============================================================================
 # 3. ADD THE TARGET
 #===============================================================================
-add_library(InstructionCount SHARED InstructionCount.cpp ICAnalyses.cpp Expression.cpp)
+add_library(InstructionCount SHARED
+        InstructionCount.cpp
+        ICAnalyses.cpp
+        Expression.cpp
+        ProtoTransform.cpp
+)
 
-target_link_libraries(InstructionCount PUBLIC LLVM)
+message(STATUS "PROTO_LIB=${PROTO_LIB}")
+message(STATUS "PROTO_DIR=${PROTO_DIR}")
+
+target_link_libraries(InstructionCount
+        PUBLIC LLVM
+        PRIVATE protobuf::libprotobuf
+)
+
+target_include_directories(InstructionCount PRIVATE
+        ${PROTO_DIR}
+)
 
 # Allow undefined symbols in shared objects on Darwin (this is the default
 # behaviour on Linux)
