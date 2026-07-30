@@ -185,48 +185,11 @@ ConfigReader::Result ConfigReader::run(Module &M, ModuleAnalysisManager &MAM) {
   return config;
 }
 
-// std::map<Function *, std::size_t> function_variable_ids{};
-/*
-  Function *build(LLVMContext &Ctx, ScalarEvolution &SE, const SCEV *S) {
-
-  auto NewM = std::make_unique<Module>("test_module", Ctx);
-  NewM->setDataLayout(SE.getDataLayout());
-
-  Type *I32 = Type::getInt32Ty(Ctx);
-  FunctionType *FT = FunctionType::get(I32, {}, false);
-  Function *F = Function::Create(FT, Function::ExternalLinkage, "eval", NewM.get());
-
-  BasicBlock *Entry = BasicBlock::Create(Ctx, "entry", F);
-  IRBuilder<> B(Entry);
-
-  // Create terminator FIRST — gives a valid non-sentinel instruction
-  Instruction *Ret = B.CreateRet(UndefValue::get(I32));
-
-  if (isa<SCEVCouldNotCompute>(S)) {
-    errs() << "SCEV could not be computed\n";
-    return nullptr;
-  }
-
-  SCEVExpander Exp(SE, NewM->getDataLayout(), "scev");
-
-  // NO setInsertPoint — pass Ret directly as insertion point
-  Value *V = Exp.expandCodeFor(S, I32, Ret);
-
-  Ret->setOperand(0, V);
-
-  errs() << "=== Generated Function ===\n";
-  F->print(errs());
-
-  NewM.release();
-  return F;
-}
-*/
-
+	// Need this function to compute values for loop variables from IC count (n0, n1, ...)
 Function *buildSCEVFunction(LLVMContext &Ctx, ScalarEvolution &SE,
                              const SCEV *S, Module *OrigM, Module* NewM) {
 
   Type *SCEVTy = S->getType();
-    // Step 1: Collect all free variables (SCEVUnknown) in the expression
     SmallVector<Value *, 4> FreeVars;
     SmallPtrSet<Value *, 4> Seen;
 
@@ -249,7 +212,7 @@ Function *buildSCEVFunction(LLVMContext &Ctx, ScalarEvolution &SE,
     };
     collectVars(S);
 
-    // Step 2: Build function signature — one i64 param per free variable
+    // Build function signature — one i64 param per free variable
   SmallVector<Type *, 4> ParamTypes;
   for (Value *V : FreeVars)
     ParamTypes.push_back(V->getType());
@@ -267,7 +230,7 @@ Function *buildSCEVFunction(LLVMContext &Ctx, ScalarEvolution &SE,
     IRBuilder<> B(Entry);
     Instruction *Ret = B.CreateRet(UndefValue::get(SCEVTy));
 
-    // Step 3: Rewrite the SCEV replacing free vars with function arguments
+    // Rewrite the SCEV replacing free vars with function arguments
     // Build a map: original Value* -> new Argument*
     ValueToValueMapTy VMap;
     for (auto [Idx, FreeVar] : llvm::enumerate(FreeVars)) {
@@ -295,7 +258,7 @@ Function *buildSCEVFunction(LLVMContext &Ctx, ScalarEvolution &SE,
 
     const SCEV *RemappedS = remapSCEV(S);
 
-    // Step 4: Expand the remapped SCEV into the new function
+    // Expand the remapped SCEV into the new function
     SCEVExpander Exp(SE, NewM->getDataLayout(), "scev-extract");
     Value *V = Exp.expandCodeFor(RemappedS, SCEVTy, Ret);
 
@@ -306,70 +269,11 @@ Function *buildSCEVFunction(LLVMContext &Ctx, ScalarEvolution &SE,
 
     Ret->setOperand(0, Clamped);
 
-    errs() << "=== Extracted SCEV Function ===\n";
+    errs() << "Extracted SCEV Function\n";
     F->print(outs());
 
     return F;
 }
-
-  void addMainWrapper(Module &NewM, Function *SCEVFn) {
-  LLVMContext &Ctx = NewM.getContext();
-
-  // Standard C main: int main(int argc, char **argv)
-  Type *I32 = Type::getInt32Ty(Ctx);
-  Type *I64 = Type::getInt64Ty(Ctx);
-  Type *I8Ptr = PointerType::getUnqual(Ctx);
-  Type *I8PtrPtr = PointerType::getUnqual(Ctx);
-
-  FunctionType *MainTy = FunctionType::get(I32, {I32, I8PtrPtr}, false);
-  Function *Main = Function::Create(MainTy, Function::ExternalLinkage, "main", NewM);
-
-  auto *Argc = Main->getArg(0);
-  auto *Argv = Main->getArg(1);
-  Argc->setName("argc");
-  Argv->setName("argv");
-
-  BasicBlock *Entry = BasicBlock::Create(Ctx, "entry", Main);
-  IRBuilder<> B(Entry);
-
-  // Get argv[1]
-  Value *Argv1Ptr = B.CreateGEP(I8Ptr, Argv,
-                                 ConstantInt::get(I32, 1), "argv1ptr");
-  Value *Argv1 = B.CreateLoad(I8Ptr, Argv1Ptr, "argv1");
-
-  Value *Result;
-  if (SCEVFn->arg_size() > 0) {
-    Type *ParamTy = SCEVFn->getArg(0)->getType();
-
-    // Call atoi(argv[1]) to parse the string to int
-    FunctionCallee toIntegerType;
-    if (ParamTy->isIntegerTy() && ParamTy->getIntegerBitWidth() == 32) {
-      toIntegerType = NewM.getOrInsertFunction(
-        "atoi", FunctionType::get(I32, {I8Ptr}, false));
-    } else if (ParamTy->isIntegerTy() && ParamTy->getIntegerBitWidth() == 64) {
-      toIntegerType = NewM.getOrInsertFunction(
-       "atoll", FunctionType::get(I64, {I8Ptr}, false));
-    } else {
-      //default to 32-bit
-      toIntegerType = NewM.getOrInsertFunction("atoi", FunctionType::get(I32, {I8Ptr}, false));
-    }
-    Value *N = B.CreateCall(toIntegerType, {Argv1}, "n");
-
-    // Cast to SCEVFn's param type if needed
-    Value *Casted = B.CreateIntCast(N, ParamTy, true, "casted");
-
-    // Call scev_eval
-    Result = B.CreateCall(SCEVFn, {Casted}, "result");
-  } else {
-    Result = B.CreateCall(SCEVFn, {}, "result");
-  }
-  Value *Ret = B.CreateIntCast(Result, I32, true, "ret");
-  B.CreateRet(Ret);
-
-  errs() << "=== Main Wrapper ===\n";
-  Main->print(errs());
-}
-
 
 CounterFunctionAnalysis::Result
 CounterFunctionAnalysis::run(Function &F, FunctionAnalysisManager &FAM) {
@@ -397,6 +301,7 @@ CounterFunctionAnalysis::run(Function &F, FunctionAnalysisManager &FAM) {
   LoopInfo &LI = FAM.getResult<LoopAnalysis>(F);
   ScalarEvolution &SE = FAM.getResult<ScalarEvolutionAnalysis>(F);
   for (Loop *loop : LI) {
+  	annotateLoop(loop, SE, F.getContext());
     assignLoopsToBasicBlocks(BlTL, loop);
     assignLoopsToLoopBounds(BoTL, loop_bound_map, loopNMap, unbounded_loops, loop, SE);
   }
@@ -752,6 +657,43 @@ Value *CounterFunctionAnalysis::extractBoundFromExitCondition(Loop *loop) {
   return nullptr;
 }
 
+bool isLoopControlInstruction(Instruction *I, Loop *L,
+																			ScalarEvolution &SE) {
+	if (SE.isSCEVable(I->getType())) {
+		if (auto *AR = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(I)))
+			if (AR->getLoop() == L)
+				return true;
+	}
+
+	if (auto *Cmp = dyn_cast<ICmpInst>(I)) {
+		BasicBlock *BB = Cmp->getParent();
+		if (L->isLoopExiting(BB)) {
+			const SCEV *BTC = SE.getExitCount(L, BB);
+			if (!isa<SCEVCouldNotCompute>(BTC))
+				return true;
+		}
+	}
+
+	if (I->isTerminator() && L->isLoopExiting(I->getParent()))
+		return true;
+
+	return false;
+}
+
+	// Not safe to be ignored by dbg.pass.no.op, dbg information is tampered
+	//TODO: move this block into dbg pass and not here, would be much cleanr...
+void CounterFunctionAnalysis::annotateLoop(Loop *L, ScalarEvolution &SE, LLVMContext &Ctx) {
+	for (BasicBlock *BB : L->blocks()) {
+		for (Instruction &I : *BB) {
+			if (isLoopControlInstruction(&I, L, SE))
+				I.setMetadata("ps.loop", MDNode::get(Ctx, {}));
+		}
+	}
+
+	for (Loop *SubL : L->getSubLoops())
+		annotateLoop(SubL, SE, Ctx);
+}
+
 void CounterFunctionAnalysis::assignLoopsToBasicBlocks(BlockToLoops &BTL,
                                                        Loop *loop) {
   for (Loop *l_inner : *loop) {
@@ -800,7 +742,9 @@ void CounterFunctionAnalysis::countInstructions(
       opcode_name = opcode_name + "*" + typeStr;
 
       llvm::outs() << "Processing Instruction: " << opcode_name << "\n";
-      bool dontCount = it == config.instructions_to_count.end();
+    	bool isDbgMarked = (inst.getMetadata("dbg.pass.no.op") != nullptr);
+    	bool isLoopMarked = inst.getMetadata("ps.loop") != nullptr;
+      bool dontCount = (it == config.instructions_to_count.end()) || (isDbgMarked && !isLoopMarked);
       bool isCallOrInvoke = isa<CallInst, InvokeInst>(inst);
       if (dontCount && !isCallOrInvoke) {
         continue;
@@ -976,6 +920,18 @@ CounterModuleAnalysis::run(Module &M, ModuleAnalysisManager &MAM) {
     result.function_results[F] =
         FAM.getResult<CountAggregationFunctionAnalysis>(*F);
   }
+
+	std::filesystem::path outputDir = "ic_out";
+	std::filesystem::create_directories(outputDir);
+
+	std::string moduleName = M.getSourceFileName();
+	std::error_code EC;
+	std::string outputFile = outputDir / (moduleName + ".ll");
+	raw_fd_ostream OS(outputFile, EC, sys::fs::OF_None);
+	if (EC) {
+		errs() << "Could not open file: " << EC.message() << "\n";
+	}
+	M.print(OS, nullptr);
 
   return result;
 }

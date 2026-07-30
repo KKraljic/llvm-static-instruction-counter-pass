@@ -60,7 +60,7 @@ message(STATUS "PROTO_DIR=${PROTO_DIR}")
 
 target_link_libraries(InstructionCount
         PUBLIC LLVM
-        PRIVATE protobuf::libprotobuf
+        PRIVATE protobuf::libprotobuf ${PROTO_DIR}/libproto.so
 )
 
 target_include_directories(InstructionCount PRIVATE

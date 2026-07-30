@@ -115,6 +115,8 @@ struct CounterFunctionAnalysis
 
   Value *extractBoundFromExitCondition(Loop *loop);
 
+	void annotateLoop(Loop *L, ScalarEvolution &SE, LLVMContext &Ctx);
+
   void assignLoopsToBasicBlocks(BlockToLoops &BTL, Loop *loop);
   void countInstructions(Result &result,
                          std::map<Loop *, ExprHandle> &loop_exprs,

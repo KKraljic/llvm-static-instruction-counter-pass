@@ -15,6 +15,6 @@ instructions_to_count:
 - llvm.nvvm.sqrt.rn.d
 energy_model_names: [all_ones]
 targets_allowed: [gpu]
-aggregation_level: fid
+aggregation_level: all
 verbose: false
 run_tests: false
