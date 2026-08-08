@@ -728,13 +728,13 @@ void CounterFunctionAnalysis::countInstructions(
         }
       }
 
-      if (inst.getNumOperands() > 0)
-        type = inst.getOperand(0)->getType();
+      if (!llvm::isa<llvm::LoadInst>(&inst) && inst.getNumOperands() > 0) {
+	      type = inst.getOperand(0)->getType();
+      }
 
-      std::string typeStr;
-      llvm::raw_string_ostream rso(typeStr);
-      type->print(rso);
-      llvm::outs() << typeStr << "\n";
+    	std::string typeStr;
+    	llvm::raw_string_ostream rso(typeStr);
+    	type->print(rso);
 
       auto it = std::find(config.instructions_to_count.begin(),
                     config.instructions_to_count.end(), opcode_name);
@@ -783,15 +783,30 @@ void CounterFunctionAnalysis::countInstructions(
           continue;
         }
 
+      	outs() << "Checking call to " << called_F->getName().str() << "\n";
+      	std::string fNameToAdd = "";
         auto it =
             std::find(config.instructions_to_count.begin(),
                       config.instructions_to_count.end(), called_F->getName());
+      	if (it != config.instructions_to_count.end()) {
+      		fNameToAdd = called_F->getName().str();
+      	} else {
+      		auto demangled = llvm::demangle(called_F->getName().str());
+      		auto demangled_fname = StringRef(demangled).split('(').first;
+      		outs() << "Checking call to " << demangled_fname << "\n";
+      		it = std::find(config.instructions_to_count.begin(),
+					config.instructions_to_count.end(), demangled_fname);
+      		if (it != config.instructions_to_count.end()) {
+      			fNameToAdd = demangled_fname;
+      		}
+      	}
         if (it != config.instructions_to_count
                       .end()) { // if it should be counted as an instruction
           if (config.verbose)
             errs() << "user specified call.\n";
-          std::string fname = called_F->getName().str() + "*";
+          std::string fname = fNameToAdd + "*";
           fname += typeStr;
+        	outs() << "adding to instruction cots: " << fname << "\n";
           if (result.instruction_costs.count(fname)) {
             result.instruction_costs[fname] =
                 add({result.instruction_costs[fname], expr});

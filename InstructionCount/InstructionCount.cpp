@@ -151,8 +151,6 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   		}
   	}
 
-
-
   	auto *functions = report.mutable_functions();
   	for (auto &[function, FR] : MR.function_results) {
   		if (function->isDeclaration())
@@ -174,26 +172,25 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   				continue;
   			}
 
+  			if (FR.instruction_costs.find(inst) == FR.instruction_costs.end()) {
+  				continue;
+  			}
   			energy_estimation::InstructionCount* entry = FunctionInfo.add_count();
 
   			std::string key1 = inst.substr(0, pos);
   			std::string key2 = inst.substr(pos + 1);
 
-  			energy_estimation::ValueType type = ProtoTransform::typeToProto(key2);
+  			energy_estimation::ValueType type = ProtoTransform::typeToProto(key2, key1);
   			llvm::outs() << ValueType_Name(type).c_str() << "\n";
   			entry->set_type(type);
   			entry->set_instruction(ProtoTransform::instToProto(key1));
 
   			ExprHandle expr;
-  			if (FR.instruction_costs.find(inst) == FR.instruction_costs.end()) {
-  				expr = constant(0);
-  			} else {
-  				size_t energy_model = config.energy_model[energy_model_name][inst];
-  				if (!energy_model) energy_model = 1;
-  				outs() << "Energy Model: " << energy_model << "\n";
-  				expr = mul({FR.instruction_costs.at(inst),
-											constant(energy_model)});
-  			}
+  			size_t energy_model = config.energy_model[energy_model_name][inst];
+  			if (!energy_model) energy_model = 1;
+  			outs() << "Energy Model: " << energy_model << "\n";
+  			expr = mul({FR.instruction_costs.at(inst),
+										constant(energy_model)});
 
   			entry->set_expression(toString(expr));
   		}

@@ -6,13 +6,23 @@
 
 #include <llvm/IR/Instructions.h>
 
+const llvm::StringMap<ValueType> ProtoTransform::InstTypeMap {
+	{"__hadd",  TYPE_FP16},
+	{"__hsub",  TYPE_FP16},
+	{"__hmul",  TYPE_FP16},
+};
+
 std::string capitalize(std::string s) {
 	if (!s.empty())
 		s[0] = std::toupper(static_cast<unsigned char>(s[0]));
 	return s;
 }
 
-ValueType ProtoTransform::typeToProto(const std::string &type) {
+ValueType ProtoTransform::typeToProto(const std::string &type, const std::string &inst) {
+	if (ProtoTransform::InstTypeMap.contains(inst)) {
+		return ProtoTransform::InstTypeMap.at(inst);
+	}
+
 	std::cout << "typeToProto: " << type << std::endl;
   if (type == "float") return TYPE_FP32;
   if (type == "double") return TYPE_FP64;
@@ -20,6 +30,9 @@ ValueType ProtoTransform::typeToProto(const std::string &type) {
   if (type == "i32") return TYPE_INT32;
   if (type == "i64") return TYPE_INT64;
   if (type == "i16") return TYPE_INT16;
+	if (type.find("ptr") != std::string::npos) {
+		return TYPE_PTR;
+	}
   return TYPE_ERR;
 }
 
@@ -75,18 +88,33 @@ std::string ProtoTransform::typeToString(llvm::Type* type) {
 
 energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k) {
 	std::cout << "instToProto: " << k << std::endl;
-  if (k == "fadd" || k == "add") {
+  if (k == "fadd" || k == "add" || k == "__hadd") {
     return INST_ADD;
   }
-  if (k == "fsub" || k == "sub") {
+  if (k == "fsub" || k == "sub" || k == "__hsub") {
     return INST_SUB;
   }
-  if (k == "fmul" || k == "mul") {
+  if (k == "fmul" || k == "mul" || k == "__hmul") {
     return INST_MUL;
   }
+	if (k == "or") {
+		return INST_OR;
+	}
+	if (k == "load") {
+		return INST_LOAD;
+	}
+	if (k == "store") {
+		return INST_STORE;
+	}
   if (k.find("fma") != std::string::npos) {
     return INST_FMA;
   }
+	if (k == "__nv_sinf" || k == "__nv_sin") {
+		return INST_SIN;
+	}
+	if (k == "__nv_cosf" || k == "__nv_cos") {
+		return INST_COS;
+	}
   return INST_ERR;
 }
 
