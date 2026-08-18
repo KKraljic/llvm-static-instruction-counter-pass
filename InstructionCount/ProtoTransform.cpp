@@ -106,6 +106,12 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k)
 	if (k == "store") {
 		return INST_STORE;
 	}
+	if (k == "shared_load") {
+		return INST_SHARED_LOAD;
+	}
+	if (k == "shared_store") {
+		return INST_SHARED_STORE;
+	}
   if (k.find("fma") != std::string::npos) {
     return INST_FMA;
   }

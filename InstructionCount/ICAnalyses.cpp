@@ -712,6 +712,14 @@ void CounterFunctionAnalysis::countInstructions(
     for (auto &inst : BB) {
       std::string opcode_name = std::string{inst.getOpcodeName()};
 
+      bool isSharedLoad = inst.getMetadata("epi.shared_load") != nullptr;
+      bool isSharedStore = inst.getMetadata("epi.shared_store") != nullptr;
+      if (isSharedLoad) {
+        opcode_name = "shared_load";
+      } else if (isSharedStore) {
+        opcode_name = "shared_store";
+      }
+
       llvm::Type* type = inst.getType();
 
       if (auto *ret = llvm::dyn_cast<llvm::ReturnInst>(&inst)) {

@@ -8,6 +8,8 @@ instructions_to_count:
 - fadd
 - fsub
 - load
+- shared_load
+- shared_store
 - __nv_sinf
 - __nv_cosf
 - llvm.nvvm.fma.rn.d
