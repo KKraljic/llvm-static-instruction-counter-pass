@@ -1,3 +1,4 @@
+#include "DebugToggle.hpp"
 #include "ICAnalyses.hpp"
 #include <fstream>
 #include <llvm/Analysis/LoopInfo.h>
@@ -15,6 +16,7 @@
 #include "llvm/TargetParser/Host.h"         // getDefaultTargetTriple
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -269,8 +271,10 @@ Function *buildSCEVFunction(LLVMContext &Ctx, ScalarEvolution &SE,
 
     Ret->setOperand(0, Clamped);
 
-    errs() << "Extracted SCEV Function\n";
-    F->print(outs());
+    if (EMDebugEnabled()) {
+      errs() << "Extracted SCEV Function\n";
+      F->print(outs());
+    }
 
     return F;
 }
@@ -351,14 +355,16 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
     std::map<const SCEV*, std::unique_ptr<llvm::Module>> &loopNMap,
     const std::vector<Loop *> &unbounded_loops,
     std::map<Loop *, ExprHandle> &loop_exprs, Config &config) {
-  outs() << "Create Expressions For loops\n";
+  if (EMDebugEnabled()) outs() << "Create Expressions For loops\n";
   if (config.verbose)
     outs() << "Assigning vars to the loops:\n";
   for (auto &[bounds, loops] : BoTL) {
-    outs() << "  Start: " << *bounds.start << "\n";
-    outs() << "  Step: " << *bounds.step << "\n";
-    outs() << "  btc: " << *bounds.btc << "\n";
-    outs() << "\n";
+    if (EMDebugEnabled()) {
+      outs() << "  Start: " << *bounds.start << "\n";
+      outs() << "  Step: " << *bounds.step << "\n";
+      outs() << "  btc: " << *bounds.btc << "\n";
+      outs() << "\n";
+    }
 
     size_t nNumber = Variable::latest_id["n"];
     std::string loopBTC;
@@ -374,8 +380,7 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
     std::string Filename = "scev_n"+std::to_string(nNumber) + ".bc";
     llvm::raw_fd_ostream OS(Filename, EC, llvm::sys::fs::OF_None);
     if (EC) {
-      llvm::errs() << "Could not open file: " << EC.message() << "\n";
-      return;
+      llvm::report_fatal_error(llvm::Twine("Could not open file ") + Filename + ": " + EC.message());
     }
     llvm::WriteBitcodeToFile(*loopModule, OS);
     OS.flush();
@@ -415,18 +420,21 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
 
   BasicBlock *header = loop->getHeader();
   Function *F = header->getParent();
-  outs() << "[Loop in " << F->getName() << "] "
-         << "Header: " << header->getName() << "\n";
+  if (EMDebugEnabled())
+    outs() << "[Loop in " << F->getName() << "] "
+           << "Header: " << header->getName() << "\n";
 
   // Print the exit condition so we can see what LLVM sees
   BasicBlock *exitingBB = loop->getExitingBlock();
   if (!exitingBB) {
-    outs() << "  -> multiple exiting blocks (or none), getBounds() will fail\n";
+    if (EMDebugEnabled()) outs() << "  -> multiple exiting blocks (or none), getBounds() will fail\n";
   } else {
-    outs() << "  -> exiting block: " << exitingBB->getName() << "\n";
-    if (auto *BI = dyn_cast<BranchInst>(exitingBB->getTerminator())) {
-      if (BI->isConditional())
-        outs() << "  -> exit condition: " << *BI->getCondition() << "\n";
+    if (EMDebugEnabled()) {
+      outs() << "  -> exiting block: " << exitingBB->getName() << "\n";
+      if (auto *BI = dyn_cast<BranchInst>(exitingBB->getTerminator())) {
+        if (BI->isConditional())
+          outs() << "  -> exit condition: " << *BI->getCondition() << "\n";
+      }
     }
   }
 
@@ -437,7 +445,7 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
   // First try LLVM's canonical induction variable.
   if (PHINode *IV = loop->getInductionVariable(SE)) {
 
-      outs() << "  -> induction variable: " << *IV << "\n";
+      if (EMDebugEnabled()) outs() << "  -> induction variable: " << *IV << "\n";
 
       if (const auto *AR =
               dyn_cast<SCEVAddRecExpr>(SE.getSCEV(IV))) {
@@ -457,10 +465,10 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
 
           const SCEV *S =  nullptr;
           if (SE.isSCEVable(Phi.getType())) {
-            outs() << "is scevable\n";
+            if (EMDebugEnabled()) outs() << "is scevable\n";
             S = SE.getSCEV(&Phi);
           } else {
-            outs() << "is not scevable\n";
+            if (EMDebugEnabled()) outs() << "is not scevable\n";
             continue;
           }
 
@@ -468,7 +476,7 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
           if (const auto *AR =
                   dyn_cast<SCEVAddRecExpr>(S)) {
 
-              outs() << "  -> non-canonical IV: " << Phi << "\n";
+              if (EMDebugEnabled()) outs() << "  -> non-canonical IV: " << Phi << "\n";
 
               Start = AR->getStart();
               Step  = AR->getStepRecurrence(SE);
@@ -476,54 +484,55 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
 
               break;
           } else if (const auto *AR = dyn_cast<SCEVMulExpr>(S)) {
-            outs() << "   -> scev mul expr\n";
+            if (EMDebugEnabled()) outs() << "   -> scev mul expr\n";
               BTC = SE.getBackedgeTakenCount(loop);
           } else {
 
+              if (EMDebugEnabled()) {
+                outs() << "  -> non AddRec SCEV type: " << *S << "\n";
 
-              outs() << "  -> non AddRec SCEV type: " << *S << "\n";
+                switch (S->getSCEVType()) {
+                  case scConstant:
+                    outs() << "     kind: constant\n";
+                    break;
 
-              switch (S->getSCEVType()) {
-                case scConstant:
-                  outs() << "     kind: constant\n";
-                  break;
+                  case scTruncate:
+                    outs() << "     kind: truncate\n";
+                    break;
 
-                case scTruncate:
-                  outs() << "     kind: truncate\n";
-                  break;
+                  case scZeroExtend:
+                    outs() << "     kind: zero extend\n";
+                    break;
 
-                case scZeroExtend:
-                  outs() << "     kind: zero extend\n";
-                  break;
+                  case scSignExtend:
+                    outs() << "     kind: sign extend\n";
+                    break;
 
-                case scSignExtend:
-                  outs() << "     kind: sign extend\n";
-                  break;
+                  case scAddExpr:
+                    outs() << "     kind: add expression\n";
+                    break;
 
-                case scAddExpr:
-                  outs() << "     kind: add expression\n";
-                  break;
+                  case scMulExpr:
+                    outs() << "     kind: multiply expression\n";
+                    break;
 
-                case scMulExpr:
-                  outs() << "     kind: multiply expression\n";
-                  break;
+                  case scUDivExpr:
+                    outs() << "     kind: unsigned division\n";
+                    break;
 
-                case scUDivExpr:
-                  outs() << "     kind: unsigned division\n";
-                  break;
+                  case scSMaxExpr:
+                  case scUMaxExpr:
+                    outs() << "     kind: max expression\n";
+                    break;
 
-                case scSMaxExpr:
-                case scUMaxExpr:
-                  outs() << "     kind: max expression\n";
-                  break;
+                  case scUnknown:
+                    outs() << "     kind: unknown (SCEVUnknown)\n";
+                    break;
 
-                case scUnknown:
-                  outs() << "     kind: unknown (SCEVUnknown)\n";
-                  break;
-
-                default:
-                  outs() << "     kind: other\n";
-                  break;
+                  default:
+                    outs() << "     kind: other\n";
+                    break;
+                }
               }
 
               BTC = SE.getBackedgeTakenCount(loop);
@@ -595,16 +604,18 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
   // Add main calling scev_eval with n=100
   //addMainWrapper(*NewM, scevF);
 
-  errs() << "=== Full Module ===\n";
-  NewM->print(errs(), nullptr);
+  if (EMDebugEnabled()) {
+    errs() << "=== Full Module ===\n";
+    NewM->print(errs(), nullptr);
 
-  outs() << "  Start = " << *Start << "\n";
-  outs() << "  Step  = " << *Step  << "\n";
-  outs() << "  BTC   = " << *BTC   << "\n";
-  outs() << "  Final = " << *Final << "\n";
-  //outs() << " Expanded btc: " << *newF << "\n";
+    outs() << "  Start = " << *Start << "\n";
+    outs() << "  Step  = " << *Step  << "\n";
+    outs() << "  BTC   = " << *BTC   << "\n";
+    outs() << "  Final = " << *Final << "\n";
+    //outs() << " Expanded btc: " << *newF << "\n";
 
-  outs() << "Loop: " << loop->getLoopID() << "\n";
+    outs() << "Loop: " << loop->getLoopID() << "\n";
+  }
 
   loopNMap[BTC] = std::move(NewM);
 
@@ -685,8 +696,12 @@ bool isLoopControlInstruction(Instruction *I, Loop *L,
 void CounterFunctionAnalysis::annotateLoop(Loop *L, ScalarEvolution &SE, LLVMContext &Ctx) {
 	for (BasicBlock *BB : L->blocks()) {
 		for (Instruction &I : *BB) {
-			if (isLoopControlInstruction(&I, L, SE))
+			if (isa<GetElementPtrInst>(I)) {
+				continue;
+			}
+			if (isLoopControlInstruction(&I, L, SE)) {
 				I.setMetadata("ps.loop", MDNode::get(Ctx, {}));
+			}
 		}
 	}
 
@@ -714,10 +729,13 @@ void CounterFunctionAnalysis::countInstructions(
 
       bool isSharedLoad = inst.getMetadata("epi.shared_load") != nullptr;
       bool isSharedStore = inst.getMetadata("epi.shared_store") != nullptr;
+      bool isFma = inst.getMetadata("dbg.pass.fma") != nullptr;
       if (isSharedLoad) {
         opcode_name = "shared_load";
       } else if (isSharedStore) {
         opcode_name = "shared_store";
+      } else if (isFma) {
+        opcode_name = "fma";
       }
 
       llvm::Type* type = inst.getType();
@@ -736,7 +754,9 @@ void CounterFunctionAnalysis::countInstructions(
         }
       }
 
-      if (!llvm::isa<llvm::LoadInst>(&inst) && inst.getNumOperands() > 0) {
+      if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(&inst)) {
+        type = gep->getSourceElementType();
+      } else if (!llvm::isa<llvm::LoadInst>(&inst) && inst.getNumOperands() > 0) {
 	      type = inst.getOperand(0)->getType();
       }
 
@@ -749,7 +769,7 @@ void CounterFunctionAnalysis::countInstructions(
 
       opcode_name = opcode_name + "*" + typeStr;
 
-      llvm::outs() << "Processing Instruction: " << opcode_name << "\n";
+      if (EMDebugEnabled()) llvm::outs() << "Processing Instruction: " << opcode_name << "\n";
     	bool isDbgMarked = (inst.getMetadata("dbg.pass.no.op") != nullptr);
     	bool isLoopMarked = inst.getMetadata("ps.loop") != nullptr;
       bool dontCount = (it == config.instructions_to_count.end()) || (isDbgMarked && !isLoopMarked);

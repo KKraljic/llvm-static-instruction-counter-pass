@@ -2,6 +2,7 @@
 // Created by nick on 7/5/26.
 //
 
+#include "DebugToggle.hpp"
 #include "ProtoTransform.hpp"
 
 #include <llvm/IR/Instructions.h>
@@ -23,13 +24,14 @@ ValueType ProtoTransform::typeToProto(const std::string &type, const std::string
 		return ProtoTransform::InstTypeMap.at(inst);
 	}
 
-	std::cout << "typeToProto: " << type << std::endl;
+	if (EMDebugEnabled()) std::cout << "typeToProto: " << type << std::endl;
   if (type == "float") return TYPE_FP32;
   if (type == "double") return TYPE_FP64;
   if (type == "half") return TYPE_FP16;
-  if (type == "i32") return TYPE_INT32;
-  if (type == "i64") return TYPE_INT64;
-  if (type == "i16") return TYPE_INT16;
+  if (type == "i32") return TYPE_UINT32;
+  if (type == "i64") return TYPE_UINT64;
+  if (type == "i16") return TYPE_UINT16;
+  if (type == "i8") return TYPE_UINT8;
 	if (type.find("ptr") != std::string::npos) {
 		return TYPE_PTR;
 	}
@@ -48,13 +50,13 @@ ValueType ProtoTransform::typeToProto(llvm::Type* type) {
   if (type->isIntegerTy(1))
     return energy_estimation::TYPE_BOOL;
   if (type->isIntegerTy(8))
-    return energy_estimation::TYPE_INT8;
+    return energy_estimation::TYPE_UINT8;
   if (type->isIntegerTy(16))
-    return energy_estimation::TYPE_INT16;
+    return energy_estimation::TYPE_UINT16;
   if (type->isIntegerTy(32))
-    return energy_estimation::TYPE_INT32;
+    return energy_estimation::TYPE_UINT32;
   if (type->isIntegerTy(64))
-    return energy_estimation::TYPE_INT64;
+    return energy_estimation::TYPE_UINT64;
   if (type->isPointerTy())
     return energy_estimation::TYPE_PTR;
 
@@ -87,7 +89,7 @@ std::string ProtoTransform::typeToString(llvm::Type* type) {
 }
 
 energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k) {
-	std::cout << "instToProto: " << k << std::endl;
+	if (EMDebugEnabled()) std::cout << "instToProto: " << k << std::endl;
   if (k == "fadd" || k == "add" || k == "__hadd") {
     return INST_ADD;
   }
@@ -100,17 +102,26 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k)
 	if (k == "or") {
 		return INST_OR;
 	}
+	if (k == "and") {
+		return INST_AND;
+	}
 	if (k == "load") {
-		return INST_LOAD;
+		return INST_MEMORY_OP;
 	}
 	if (k == "store") {
-		return INST_STORE;
+		// Generic memory op, not assumed to be an L1 hit -- CacheHitRateConfig later splits
+		// the resulting MEMORY_OP count across L1/L2/main-memory.
+		return INST_MEMORY_OP;
 	}
 	if (k == "shared_load") {
 		return INST_SHARED_LOAD;
 	}
 	if (k == "shared_store") {
-		return INST_SHARED_STORE;
+		//TODO: for now assume always store = load energy
+		return INST_SHARED_LOAD;
+	}
+	if (k == "getelementptr") {
+		return INST_GETELEMENTPTR_TYPED;
 	}
   if (k.find("fma") != std::string::npos) {
     return INST_FMA;

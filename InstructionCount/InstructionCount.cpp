@@ -1,3 +1,4 @@
+#include "DebugToggle.hpp"
 #include "Expression.hpp"
 #include "ICAnalyses.hpp"
 #include "ProtoTransform.hpp"
@@ -132,11 +133,11 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
 
   	for (auto &inst : config.instructions_to_count) {
   		std::string prefix = inst + "*";
-  		outs() << "Checking instruction " << prefix << "\n";
+  		if (EMDebugEnabled()) outs() << "Checking instruction " << prefix << "\n";
 
   		for (auto &[F, FR] : MR.function_results) {
   			auto name = F->getName();
-  			outs() << "Checking function : " << name << " against prefix: " + prefix + "\n";
+  			if (EMDebugEnabled()) outs() << "Checking function : " << name << " against prefix: " + prefix + "\n";
 
   			for (auto it = FR.instruction_costs.lower_bound(prefix); it != FR.instruction_costs.end(); ++it) {
   				if (it->first.rfind(prefix, 0) != 0) break;
@@ -145,7 +146,7 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
 
   				if (!llvm::is_contained(headerInsts, instKey)) {
   					headerInsts.push_back(instKey);
-  					outs() << "Add Instruction to output: " << prefix << " - " << instKey << "\n";
+  					if (EMDebugEnabled()) outs() << "Add Instruction to output: " << prefix << " - " << instKey << "\n";
   				}
   			}
   		}
@@ -164,6 +165,8 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   		FunctionInfo.set_name(function->getName().str());
   		FunctionInfo.set_demangled(demangle(function->getName()));
 
+  		std::vector<std::pair<int, int>> merged_order;
+  		std::map<std::pair<int, int>, ExprHandle> merged_costs;
 
   		for (auto &inst : headerInsts) {
   			size_t pos = inst.find('*');
@@ -175,24 +178,35 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   			if (FR.instruction_costs.find(inst) == FR.instruction_costs.end()) {
   				continue;
   			}
-  			energy_estimation::InstructionCount* entry = FunctionInfo.add_count();
 
   			std::string key1 = inst.substr(0, pos);
   			std::string key2 = inst.substr(pos + 1);
 
   			energy_estimation::ValueType type = ProtoTransform::typeToProto(key2, key1);
+  			energy_estimation::Instruction proto_inst = ProtoTransform::instToProto(key1);
   			llvm::outs() << ValueType_Name(type).c_str() << "\n";
-  			entry->set_type(type);
-  			entry->set_instruction(ProtoTransform::instToProto(key1));
 
-  			ExprHandle expr;
   			size_t energy_model = config.energy_model[energy_model_name][inst];
   			if (!energy_model) energy_model = 1;
-  			outs() << "Energy Model: " << energy_model << "\n";
-  			expr = mul({FR.instruction_costs.at(inst),
+  			if (EMDebugEnabled()) outs() << "Energy Model: " << energy_model << "\n";
+  			ExprHandle expr = mul({FR.instruction_costs.at(inst),
 										constant(energy_model)});
 
-  			entry->set_expression(toString(expr));
+  			auto mergeKey = std::make_pair(static_cast<int>(type), static_cast<int>(proto_inst));
+  			auto it = merged_costs.find(mergeKey);
+  			if (it == merged_costs.end()) {
+  				merged_costs[mergeKey] = expr;
+  				merged_order.push_back(mergeKey);
+  			} else {
+  				it->second = add({it->second, expr});
+  			}
+  		}
+
+  		for (auto &mergeKey : merged_order) {
+  			energy_estimation::InstructionCount* entry = FunctionInfo.add_count();
+  			entry->set_type(static_cast<energy_estimation::ValueType>(mergeKey.first));
+  			entry->set_instruction(static_cast<energy_estimation::Instruction>(mergeKey.second));
+  			entry->set_expression(toString(merged_costs[mergeKey]));
   		}
 
   		(*functions)[FR.fid]  = FunctionInfo;
@@ -251,10 +265,12 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
 
     llvm::outs() << "Output to csv2\n";
 
-    for (auto &[F, FR] : MR.function_results) {
-      if (F->getName() == "foo") {
-        for (auto &[key, value] : FR.instruction_costs) {
-          llvm::outs() << key << "\n";
+    if (EMDebugEnabled()) {
+      for (auto &[F, FR] : MR.function_results) {
+        if (F->getName() == "foo") {
+          for (auto &[key, value] : FR.instruction_costs) {
+            llvm::outs() << key << "\n";
+          }
         }
       }
     }
@@ -264,11 +280,11 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
     ostream << "Function Name,Demangled Name,fid,total";
     for (auto &inst : config.instructions_to_count) {
       std::string prefix = inst + "*";
-      outs() << "Checking instruction " << prefix << "\n";
+      if (EMDebugEnabled()) outs() << "Checking instruction " << prefix << "\n";
 
       for (auto &[F, FR] : MR.function_results) {
         auto name = F->getName();
-        outs() << "Checking function : " << name << " against prefix: " + prefix + "\n";
+        if (EMDebugEnabled()) outs() << "Checking function : " << name << " against prefix: " + prefix + "\n";
 
         for (auto it = FR.instruction_costs.lower_bound(prefix); it != FR.instruction_costs.end(); ++it) {
           if (it->first.rfind(prefix, 0) != 0) break; // stop when prefix no longer matches
@@ -278,7 +294,7 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
 
           if (!llvm::is_contained(headerInsts, instKey)) {
             headerInsts.push_back(instKey);
-            outs() << "Add Instruction to output: " << prefix << " - " << instKey << "\n";
+            if (EMDebugEnabled()) outs() << "Add Instruction to output: " << prefix << " - " << instKey << "\n";
 
             ostream << "," << instKey;
           }
@@ -293,9 +309,9 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
     }
     for (auto &[F, FR] : MR.function_results) {
       auto name = F->getName();
-      outs() << "Checking function : " << name << "\n";
+      if (EMDebugEnabled()) outs() << "Checking function : " << name << "\n";
       for (auto &[key, cost] : FR.instruction_costs) {
-        outs() << "Adding to total costs (" << key << "): " << toString(cost) << "\n";
+        if (EMDebugEnabled()) outs() << "Adding to total costs (" << key << "): " << toString(cost) << "\n";
         total_costs[F] = add({total_costs[F], cost});
       }
     }

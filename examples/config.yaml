@@ -1,17 +1,26 @@
 instructions_to_count:
-# - mul
+- mul
 # - div
 - add
-# - sub
+- sub
 - fmul
 - fdiv
 - fadd
 - fsub
+- fma
+- or
+- and
 - load
+- store
+- getelementptr
 - shared_load
 - shared_store
 - __nv_sinf
+- __nv_sin
 - __nv_cosf
+- __nv_cos
+- __hadd
+- __hsub
 - llvm.nvvm.fma.rn.d
 - llvm.nvvm.mul.rn.d
 - llvm.nvvm.sqrt.rn.d
