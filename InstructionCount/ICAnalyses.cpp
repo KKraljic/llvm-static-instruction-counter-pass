@@ -848,7 +848,13 @@ void CounterFunctionAnalysis::countInstructions(
         continue;
       }
 
-      ExprHandle expr = constant(1);
+
+      uint64_t vectorMultiplier = 1;
+      if (auto *fixedVecTy = llvm::dyn_cast<llvm::FixedVectorType>(type)) {
+      	// <4 x i32> -> spawns 4 instructions of that type (typically)
+        vectorMultiplier = fixedVecTy->getNumElements();
+      }
+      ExprHandle expr = constant(vectorMultiplier);
       if (BlTL.count(&BB)) {
         for (auto loop : BlTL[&BB]) {
           expr = mul({loop_exprs[loop], expr});

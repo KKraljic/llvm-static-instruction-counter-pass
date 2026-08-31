@@ -25,14 +25,24 @@ ValueType ProtoTransform::typeToProto(const std::string &type, const std::string
 	}
 
 	if (EMDebugEnabled()) std::cout << "typeToProto: " << type << std::endl;
-  if (type == "float") return TYPE_FP32;
-  if (type == "double") return TYPE_FP64;
-  if (type == "half") return TYPE_FP16;
-  if (type == "i32") return TYPE_UINT32;
-  if (type == "i64") return TYPE_UINT64;
-  if (type == "i16") return TYPE_UINT16;
-  if (type == "i8") return TYPE_UINT8;
-	if (type.find("ptr") != std::string::npos) {
+	
+	std::string elemType = type;
+	if (elemType.size() >= 2 && elemType.front() == '<' && elemType.back() == '>') {
+		std::string inner = elemType.substr(1, elemType.size() - 2);
+		size_t lastX = inner.rfind(" x ");
+		if (lastX != std::string::npos) {
+			elemType = inner.substr(lastX + 3);
+		}
+	}
+
+  if (elemType == "float") return TYPE_FP32;
+  if (elemType == "double") return TYPE_FP64;
+  if (elemType == "half") return TYPE_FP16;
+  if (elemType == "i32") return TYPE_UINT32;
+  if (elemType == "i64") return TYPE_UINT64;
+  if (elemType == "i16") return TYPE_UINT16;
+  if (elemType == "i8") return TYPE_UINT8;
+	if (elemType.find("ptr") != std::string::npos) {
 		return TYPE_PTR;
 	}
   return TYPE_ERR;
