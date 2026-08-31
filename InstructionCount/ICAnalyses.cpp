@@ -279,6 +279,26 @@ Function *buildSCEVFunction(LLVMContext &Ctx, ScalarEvolution &SE,
     return F;
 }
 
+template <typename T>
+static std::map<unsigned, uint64_t> getDbgPassWidthCounts(const T &V, llvm::StringRef Name) {
+  std::map<unsigned, uint64_t> Result;
+  auto *MD = V.getMetadata(Name);
+  if (!MD)
+    return Result;
+  for (unsigned i = 0; i + 1 < MD->getNumOperands(); i += 2) {
+    auto *WidthCAM = llvm::dyn_cast<llvm::ConstantAsMetadata>(MD->getOperand(i));
+    auto *CountCAM = llvm::dyn_cast<llvm::ConstantAsMetadata>(MD->getOperand(i + 1));
+    if (!WidthCAM || !CountCAM)
+      continue;
+    auto *WidthCI = llvm::dyn_cast<llvm::ConstantInt>(WidthCAM->getValue());
+    auto *CountCI = llvm::dyn_cast<llvm::ConstantInt>(CountCAM->getValue());
+    if (!WidthCI || !CountCI)
+      continue;
+    Result[static_cast<unsigned>(WidthCI->getZExtValue())] = CountCI->getZExtValue();
+  }
+  return Result;
+}
+
 CounterFunctionAnalysis::Result
 CounterFunctionAnalysis::run(Function &F, FunctionAnalysisManager &FAM) {
   CounterFunctionAnalysis::Result result;
@@ -315,6 +335,16 @@ CounterFunctionAnalysis::run(Function &F, FunctionAnalysisManager &FAM) {
   result.loop_bound_map = std::move(loop_bound_map);
 
   countInstructions(result, loop_exprs, BlTL, config);
+
+  for (auto &[Width, Count] : getDbgPassWidthCounts(F, "dbg.pass.prologue.loads")) {
+    std::string Key = "load*i" + std::to_string(Width);
+    ExprHandle expr = constant(Count);
+    if (result.instruction_costs.count(Key)) {
+      result.instruction_costs[Key] = add({result.instruction_costs[Key], expr});
+    } else {
+      result.instruction_costs[Key] = expr;
+    }
+  }
 
   return result;
 }
@@ -599,7 +629,9 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
   );
   NewM->setDataLayout(TM->createDataLayout());
 
-  Function *scevF = buildSCEVFunction(Ctx, SE, BTC, header->getModule(), NewM.get());
+  const SCEV *TripCount = SE.getTripCountFromExitCount(BTC);
+
+  Function *scevF = buildSCEVFunction(Ctx, SE, TripCount, header->getModule(), NewM.get());
 
   // Add main calling scev_eval with n=100
   //addMainWrapper(*NewM, scevF);
@@ -611,6 +643,7 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
     outs() << "  Start = " << *Start << "\n";
     outs() << "  Step  = " << *Step  << "\n";
     outs() << "  BTC   = " << *BTC   << "\n";
+    outs() << "  TripCount (what scev_eval actually computes) = " << *TripCount << "\n";
     outs() << "  Final = " << *Final << "\n";
     //outs() << " Expanded btc: " << *newF << "\n";
 
@@ -730,12 +763,19 @@ void CounterFunctionAnalysis::countInstructions(
       bool isSharedLoad = inst.getMetadata("epi.shared_load") != nullptr;
       bool isSharedStore = inst.getMetadata("epi.shared_store") != nullptr;
       bool isFma = inst.getMetadata("dbg.pass.fma") != nullptr;
+      bool isUniform = inst.getMetadata("dbg.pass.uniform") != nullptr;
       if (isSharedLoad) {
         opcode_name = "shared_load";
       } else if (isSharedStore) {
         opcode_name = "shared_store";
       } else if (isFma) {
         opcode_name = "fma";
+      }
+
+      std::string configLookupName = opcode_name;
+
+      if (isUniform) {
+        opcode_name = opcode_name + "_uniform";
       }
 
       llvm::Type* type = inst.getType();
@@ -763,9 +803,39 @@ void CounterFunctionAnalysis::countInstructions(
     	std::string typeStr;
     	llvm::raw_string_ostream rso(typeStr);
     	type->print(rso);
+    	
+      std::map<unsigned, uint64_t> dbgLoadWidths = getDbgPassWidthCounts(inst, "dbg.pass.loads");
+      std::map<unsigned, uint64_t> dbgStoreWidths = getDbgPassWidthCounts(inst, "dbg.pass.stores");
+      auto emitWidthBucketedMemCost = [&](const char *PseudoOpcode,
+                                          const std::map<unsigned, uint64_t> &WidthCounts) {
+        for (auto &[Width, Count] : WidthCounts) {
+          std::string PseudoKey = std::string(PseudoOpcode) + "*i" + std::to_string(Width);
+          ExprHandle PseudoExpr = constant(Count);
+          if (BlTL.count(&BB)) {
+            for (auto loop : BlTL[&BB]) {
+              PseudoExpr = mul({loop_exprs[loop], PseudoExpr});
+            }
+          }
+          if (result.instruction_costs.count(PseudoKey)) {
+            result.instruction_costs[PseudoKey] =
+                add({result.instruction_costs[PseudoKey], PseudoExpr});
+          } else {
+            result.instruction_costs[PseudoKey] = PseudoExpr;
+          }
+        }
+      };
+
+      bool isLoadStoreInst = llvm::isa<llvm::LoadInst>(&inst) || llvm::isa<llvm::StoreInst>(&inst);
+      if (isLoadStoreInst && (!dbgLoadWidths.empty() || !dbgStoreWidths.empty())) {
+        emitWidthBucketedMemCost(llvm::isa<llvm::LoadInst>(&inst) ? "load" : "store",
+                                  llvm::isa<llvm::LoadInst>(&inst) ? dbgLoadWidths : dbgStoreWidths);
+        continue; // fully handled above -- skip the generic opcode*type accounting below
+      }
+      emitWidthBucketedMemCost("load", dbgLoadWidths);
+      emitWidthBucketedMemCost("store", dbgStoreWidths);
 
       auto it = std::find(config.instructions_to_count.begin(),
-                    config.instructions_to_count.end(), opcode_name);
+                    config.instructions_to_count.end(), configLookupName);
 
       opcode_name = opcode_name + "*" + typeStr;
 

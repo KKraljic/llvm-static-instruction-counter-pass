@@ -88,48 +88,60 @@ std::string ProtoTransform::typeToString(llvm::Type* type) {
   return typeStr(type);
 }
 
-energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k) {
+energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k, bool &isUniform) {
 	if (EMDebugEnabled()) std::cout << "instToProto: " << k << std::endl;
-  if (k == "fadd" || k == "add" || k == "__hadd") {
+
+	static constexpr llvm::StringLiteral kUniformSuffix = "_uniform";
+	std::string base = k;
+	isUniform = false;
+	if (llvm::StringRef(k).ends_with(kUniformSuffix)) {
+		isUniform = true;
+		base = k.substr(0, k.size() - kUniformSuffix.size());
+	}
+
+  if (base == "fadd" || base == "add" || base == "__hadd") {
     return INST_ADD;
   }
-  if (k == "fsub" || k == "sub" || k == "__hsub") {
+  if (base == "fsub" || base == "sub" || base == "__hsub") {
     return INST_SUB;
   }
-  if (k == "fmul" || k == "mul" || k == "__hmul") {
+  if (base == "fmul" || base == "mul" || base == "__hmul") {
     return INST_MUL;
   }
-	if (k == "or") {
+	if (base == "or") {
 		return INST_OR;
 	}
-	if (k == "and") {
+	if (base == "and") {
 		return INST_AND;
 	}
-	if (k == "load") {
+	if (base == "load") {
 		return INST_MEMORY_OP;
 	}
-	if (k == "store") {
+	if (base == "store") {
 		// Generic memory op, not assumed to be an L1 hit -- CacheHitRateConfig later splits
 		// the resulting MEMORY_OP count across L1/L2/main-memory.
 		return INST_MEMORY_OP;
 	}
-	if (k == "shared_load") {
+	if (base == "shared_load") {
 		return INST_SHARED_LOAD;
 	}
-	if (k == "shared_store") {
+	if (base == "shared_store") {
 		//TODO: for now assume always store = load energy
 		return INST_SHARED_LOAD;
 	}
-	if (k == "getelementptr") {
+	if (base == "getelementptr") {
 		return INST_GETELEMENTPTR_TYPED;
 	}
-  if (k.find("fma") != std::string::npos) {
+	if (base == "icmp") {
+		return INST_ICMP_TYPED;
+	}
+  if (base.find("fma") != std::string::npos || base.find("fmuladd") != std::string::npos) {
     return INST_FMA;
   }
-	if (k == "__nv_sinf" || k == "__nv_sin") {
+	if (base == "__nv_sinf" || base == "__nv_sin") {
 		return INST_SIN;
 	}
-	if (k == "__nv_cosf" || k == "__nv_cos") {
+	if (base == "__nv_cosf" || base == "__nv_cos") {
 		return INST_COS;
 	}
   return INST_ERR;

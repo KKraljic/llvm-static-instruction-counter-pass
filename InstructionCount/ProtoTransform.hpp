@@ -27,7 +27,7 @@ public:
   static energy_estimation::ValueType typeToProto(const std::string &type, const std::string &inst);
   static energy_estimation::ValueType typeToProto(llvm::Type* type);
   static std::string typeToString(llvm::Type* type);
-  static energy_estimation::Instruction instToProto(const std::string &k);
+  static energy_estimation::Instruction instToProto(const std::string &k, bool &isUniform);
   static energy_estimation::Instruction instToProto(const InstKey &k);
 private:
 	static const llvm::StringMap<ValueType> InstTypeMap;

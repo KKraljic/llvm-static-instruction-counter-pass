@@ -132,21 +132,22 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   	llvm::SmallVector<std::string> headerInsts{};
 
   	for (auto &inst : config.instructions_to_count) {
-  		std::string prefix = inst + "*";
-  		if (EMDebugEnabled()) outs() << "Checking instruction " << prefix << "\n";
+  		for (const std::string &prefix : {inst + "*", inst + "_uniform*"}) {
+  			if (EMDebugEnabled()) outs() << "Checking instruction " << prefix << "\n";
 
-  		for (auto &[F, FR] : MR.function_results) {
-  			auto name = F->getName();
-  			if (EMDebugEnabled()) outs() << "Checking function : " << name << " against prefix: " + prefix + "\n";
+  			for (auto &[F, FR] : MR.function_results) {
+  				auto name = F->getName();
+  				if (EMDebugEnabled()) outs() << "Checking function : " << name << " against prefix: " + prefix + "\n";
 
-  			for (auto it = FR.instruction_costs.lower_bound(prefix); it != FR.instruction_costs.end(); ++it) {
-  				if (it->first.rfind(prefix, 0) != 0) break;
+  				for (auto it = FR.instruction_costs.lower_bound(prefix); it != FR.instruction_costs.end(); ++it) {
+  					if (it->first.rfind(prefix, 0) != 0) break;
 
-  				std::string instKey = it->first;
+  					std::string instKey = it->first;
 
-  				if (!llvm::is_contained(headerInsts, instKey)) {
-  					headerInsts.push_back(instKey);
-  					if (EMDebugEnabled()) outs() << "Add Instruction to output: " << prefix << " - " << instKey << "\n";
+  					if (!llvm::is_contained(headerInsts, instKey)) {
+  						headerInsts.push_back(instKey);
+  						if (EMDebugEnabled()) outs() << "Add Instruction to output: " << prefix << " - " << instKey << "\n";
+  					}
   				}
   			}
   		}
@@ -165,8 +166,10 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   		FunctionInfo.set_name(function->getName().str());
   		FunctionInfo.set_demangled(demangle(function->getName()));
 
-  		std::vector<std::pair<int, int>> merged_order;
-  		std::map<std::pair<int, int>, ExprHandle> merged_costs;
+  		// (type, instruction, isUniform)
+  		using MergeKey = std::tuple<int, int, bool>;
+  		std::vector<MergeKey> merged_order;
+  		std::map<MergeKey, ExprHandle> merged_costs;
 
   		for (auto &inst : headerInsts) {
   			size_t pos = inst.find('*');
@@ -183,7 +186,8 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   			std::string key2 = inst.substr(pos + 1);
 
   			energy_estimation::ValueType type = ProtoTransform::typeToProto(key2, key1);
-  			energy_estimation::Instruction proto_inst = ProtoTransform::instToProto(key1);
+  			bool termIsUniform = false;
+  			energy_estimation::Instruction proto_inst = ProtoTransform::instToProto(key1, termIsUniform);
   			llvm::outs() << ValueType_Name(type).c_str() << "\n";
 
   			size_t energy_model = config.energy_model[energy_model_name][inst];
@@ -192,7 +196,7 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   			ExprHandle expr = mul({FR.instruction_costs.at(inst),
 										constant(energy_model)});
 
-  			auto mergeKey = std::make_pair(static_cast<int>(type), static_cast<int>(proto_inst));
+  			auto mergeKey = std::make_tuple(static_cast<int>(type), static_cast<int>(proto_inst), termIsUniform);
   			auto it = merged_costs.find(mergeKey);
   			if (it == merged_costs.end()) {
   				merged_costs[mergeKey] = expr;
@@ -204,9 +208,10 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
 
   		for (auto &mergeKey : merged_order) {
   			energy_estimation::InstructionCount* entry = FunctionInfo.add_count();
-  			entry->set_type(static_cast<energy_estimation::ValueType>(mergeKey.first));
-  			entry->set_instruction(static_cast<energy_estimation::Instruction>(mergeKey.second));
+  			entry->set_type(static_cast<energy_estimation::ValueType>(std::get<0>(mergeKey)));
+  			entry->set_instruction(static_cast<energy_estimation::Instruction>(std::get<1>(mergeKey)));
   			entry->set_expression(toString(merged_costs[mergeKey]));
+  			entry->set_is_uniform(std::get<2>(mergeKey));
   		}
 
   		(*functions)[FR.fid]  = FunctionInfo;
@@ -214,9 +219,9 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
 
   	std::string json_output;
   	google::protobuf::util::JsonPrintOptions options;
-  	options.add_whitespace = true;        // pretty-print with indentation
-  	options.always_print_primitive_fields = true; // include fields even if default/empty
-  	options.preserve_proto_field_names = true;    // use proto field names (snake_case)
+  	options.add_whitespace = true;
+  	options.always_print_primitive_fields = true;
+  	options.preserve_proto_field_names = true;
 
   	auto status = google::protobuf::util::MessageToJsonString(report, &json_output, options);
   	if (!status.ok()) {

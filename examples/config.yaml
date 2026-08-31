@@ -13,6 +13,8 @@ instructions_to_count:
 - load
 - store
 - getelementptr
+- icmp
+- llvm.fmuladd.f32
 - shared_load
 - shared_store
 - __nv_sinf
