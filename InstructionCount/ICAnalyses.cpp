@@ -803,7 +803,7 @@ void CounterFunctionAnalysis::countInstructions(
     	std::string typeStr;
     	llvm::raw_string_ostream rso(typeStr);
     	type->print(rso);
-    	
+
       std::map<unsigned, uint64_t> dbgLoadWidths = getDbgPassWidthCounts(inst, "dbg.pass.loads");
       std::map<unsigned, uint64_t> dbgStoreWidths = getDbgPassWidthCounts(inst, "dbg.pass.stores");
       auto emitWidthBucketedMemCost = [&](const char *PseudoOpcode,
