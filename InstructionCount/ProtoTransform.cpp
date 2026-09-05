@@ -42,6 +42,7 @@ ValueType ProtoTransform::typeToProto(const std::string &type, const std::string
   if (elemType == "i64") return TYPE_UINT64;
   if (elemType == "i16") return TYPE_UINT16;
   if (elemType == "i8") return TYPE_UINT8;
+  if (elemType == "void") return TYPE_VOID;
 	if (elemType.find("ptr") != std::string::npos) {
 		return TYPE_PTR;
 	}
@@ -144,6 +145,9 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	}
 	if (base == "icmp") {
 		return INST_ICMP_TYPED;
+	}
+	if (base == "br") {
+		return INST_BR;
 	}
   if (base.find("fma") != std::string::npos || base.find("fmuladd") != std::string::npos) {
     return INST_FMA;

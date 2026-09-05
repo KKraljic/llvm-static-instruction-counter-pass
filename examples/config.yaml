@@ -14,6 +14,7 @@ instructions_to_count:
 - store
 - getelementptr
 - icmp
+- br
 - llvm.fmuladd.f32
 - shared_load
 - shared_store

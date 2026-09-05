@@ -1,5 +1,7 @@
 #include "DebugToggle.hpp"
 #include "ICAnalyses.hpp"
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolutionExpressions.h>
@@ -406,8 +408,16 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
     std::unique_ptr<llvm::Module> loopModule = std::move(loopNMap.at(bounds.btc));
     loopModule->setModuleIdentifier("n"+std::to_string(nNumber));
 
+    std::filesystem::path scevDir(".");
+    if (auto icOutputDir = std::getenv("IC_OUTPUT_DIR")) {
+      scevDir = icOutputDir;
+    }
+    if (!std::filesystem::exists(scevDir) && !std::filesystem::create_directories(scevDir)) {
+      llvm::report_fatal_error(llvm::Twine("Could not create directory ") + scevDir.string());
+    }
+
     std::error_code EC;
-    std::string Filename = "scev_n"+std::to_string(nNumber) + ".bc";
+    std::string Filename = (scevDir / ("scev_n" + std::to_string(nNumber) + ".bc")).string();
     llvm::raw_fd_ostream OS(Filename, EC, llvm::sys::fs::OF_None);
     if (EC) {
       llvm::report_fatal_error(llvm::Twine("Could not open file ") + Filename + ": " + EC.message());
@@ -763,12 +773,16 @@ void CounterFunctionAnalysis::countInstructions(
       bool isSharedLoad = inst.getMetadata("epi.shared_load") != nullptr;
       bool isSharedStore = inst.getMetadata("epi.shared_store") != nullptr;
       bool isFma = inst.getMetadata("dbg.pass.fma") != nullptr;
+      bool isFAdd = inst.getMetadata("dbg.pass.fadd") != nullptr;
+      bool isFSub = inst.getMetadata("dbg.pass.fsub") != nullptr;
+      bool isFMul = inst.getMetadata("dbg.pass.fmul") != nullptr;
       bool isUniform = inst.getMetadata("dbg.pass.uniform") != nullptr;
       if (isSharedLoad) {
         opcode_name = "shared_load";
       } else if (isSharedStore) {
         opcode_name = "shared_store";
-      } else if (isFma) {
+      } else if (isFma || isFAdd || isFSub || isFMul) {
+        // TODO: handling on energy-estimation side, for now map fadd, fmul, fsub to fma (same pipeline)
         opcode_name = "fma";
       }
 
@@ -787,15 +801,10 @@ void CounterFunctionAnalysis::countInstructions(
         }
       }
 
-      if (auto *br = llvm::dyn_cast<llvm::BranchInst>(&inst)) {
-        if (br->isUnconditional()) {
-          // br label
-          type = llvm::Type::getVoidTy(inst.getContext());
-        }
-      }
-
       if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(&inst)) {
         type = gep->getSourceElementType();
+      } else if (llvm::isa<llvm::BranchInst>(&inst)) {
+        type = llvm::Type::getVoidTy(inst.getContext());
       } else if (!llvm::isa<llvm::LoadInst>(&inst) && inst.getNumOperands() > 0) {
 	      type = inst.getOperand(0)->getType();
       }
@@ -1043,7 +1052,7 @@ CounterModuleAnalysis::run(Module &M, ModuleAnalysisManager &MAM) {
 	std::filesystem::path outputDir = "ic_out";
 	std::filesystem::create_directories(outputDir);
 
-	std::string moduleName = M.getSourceFileName();
+	std::string moduleName = std::filesystem::path(M.getSourceFileName()).filename().string();
 	std::error_code EC;
 	std::string outputFile = outputDir / (moduleName + ".ll");
 	raw_fd_ostream OS(outputFile, EC, sys::fs::OF_None);
