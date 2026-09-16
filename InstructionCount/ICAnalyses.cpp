@@ -407,10 +407,10 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
 
     std::unique_ptr<llvm::Module> loopModule = std::move(loopNMap.at(bounds.btc));
     loopModule->setModuleIdentifier("n"+std::to_string(nNumber));
-
+  	
     std::filesystem::path scevDir(".");
     if (auto icOutputDir = std::getenv("IC_OUTPUT_DIR")) {
-      scevDir = icOutputDir;
+      scevDir = std::filesystem::path(icOutputDir) / "ic-count-scev";
     }
     if (!std::filesystem::exists(scevDir) && !std::filesystem::create_directories(scevDir)) {
       llvm::report_fatal_error(llvm::Twine("Could not create directory ") + scevDir.string());
