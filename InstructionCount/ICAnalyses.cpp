@@ -169,6 +169,7 @@ void ConfigReader::loadConfig(Config &config) {
   }
 
   yaml::Input yin((*mb)->getBuffer());
+  yin.setAllowUnknownKeys(true);
 
   yin >> config;
   if (auto error = yin.error()) {
