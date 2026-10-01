@@ -11,6 +11,8 @@ const llvm::StringMap<ValueType> ProtoTransform::InstTypeMap {
 	{"__hadd",  TYPE_FP16},
 	{"__hsub",  TYPE_FP16},
 	{"__hmul",  TYPE_FP16},
+	// br benchmark only registered UINT32
+	{"br",      TYPE_UINT32},
 };
 
 std::string capitalize(std::string s) {
@@ -157,6 +159,9 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	}
 	if (base == "__nv_cosf" || base == "__nv_cos") {
 		return INST_COS;
+	}
+	if (base == "__nv_tanf" || base == "__nv_tan") {
+		return INST_TAN;
 	}
   return INST_ERR;
 }

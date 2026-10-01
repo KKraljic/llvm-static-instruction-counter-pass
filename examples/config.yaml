@@ -22,6 +22,8 @@ instructions_to_count:
 - __nv_sin
 - __nv_cosf
 - __nv_cos
+- __nv_tanf
+- __nv_tan
 - __hadd
 - __hsub
 - llvm.nvvm.fma.rn.d
@@ -32,3 +34,4 @@ targets_allowed: [gpu]
 aggregation_level: all
 verbose: false
 run_tests: false
+alu_fma_shared_model: block_level

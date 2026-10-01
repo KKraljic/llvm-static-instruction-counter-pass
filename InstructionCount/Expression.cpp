@@ -4,6 +4,7 @@
 #include <memory>
 #include <sstream>
 #include <variant>
+#include <vector>
 
 using namespace llvm;
 
@@ -130,28 +131,36 @@ ExprHandle reduce(const ExprHandle expr) {
                 can_be_added = false;
               }
 
-              for (auto &t1 : mul_term->terms) {
-                bool found_match = false;
-                if (Variable *v1 =
-                        std::get_if<Variable>(mul_term->terms[0].get())) {
-                  for (auto &t2 : mul_term2->terms) {
-                    if (Variable *v2 =
-                            std::get_if<Variable>(mul_term2->terms[0].get())) {
-                      if (v1->letter == v2->letter && v1->id == v2->id &&
-                          v1->exponent == v2->exponent) {
-                        found_match = true;
-                        break;
-                      }
-                    } else {
+              // Monomials match only if every variable (letter/id/exponent) pairs up one-to-one,
+              // not just terms[0] -- otherwise e.g. "8*n0*n2" and "n0*n1" were wrongly merged.
+              if (can_be_added) {
+                std::vector<bool> matched(mul_term2->terms.size(), false);
+                for (auto &t1 : mul_term->terms) {
+                  Variable *v1 = std::get_if<Variable>(t1.get());
+                  if (!v1) {
+                    errs() << "This should not happen!\n";
+                    can_be_added = false;
+                    break;
+                  }
+                  bool found_match = false;
+                  for (std::size_t k = 0; k < mul_term2->terms.size(); k++) {
+                    if (matched[k]) continue;
+                    Variable *v2 = std::get_if<Variable>(mul_term2->terms[k].get());
+                    if (!v2) {
                       errs() << "This should not happen!\n";
+                      continue;
+                    }
+                    if (v1->letter == v2->letter && v1->id == v2->id &&
+                        v1->exponent == v2->exponent) {
+                      matched[k] = true;
+                      found_match = true;
+                      break;
                     }
                   }
-                } else {
-                  errs() << "This should not happen!\n";
-                }
-                if (!found_match) {
-                  can_be_added = false;
-                  break;
+                  if (!found_match) {
+                    can_be_added = false;
+                    break;
+                  }
                 }
               }
 

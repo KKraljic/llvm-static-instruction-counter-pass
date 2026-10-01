@@ -712,41 +712,52 @@ Value *CounterFunctionAnalysis::extractBoundFromExitCondition(Loop *loop) {
   return nullptr;
 }
 
-bool isLoopControlInstruction(Instruction *I, Loop *L,
-																			ScalarEvolution &SE) {
-	if (SE.isSCEVable(I->getType())) {
-		if (auto *AR = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(I)))
-			if (AR->getLoop() == L)
-				return true;
-	}
+SmallPtrSet<Instruction *, 16> collectLoopControlInstructions(Loop *L, ScalarEvolution &SE) {
+	SmallPtrSet<Instruction *, 16> control;
+	SmallVector<Value *, 16> worklist;
 
-	if (auto *Cmp = dyn_cast<ICmpInst>(I)) {
-		BasicBlock *BB = Cmp->getParent();
-		if (L->isLoopExiting(BB)) {
-			const SCEV *BTC = SE.getExitCount(L, BB);
-			if (!isa<SCEVCouldNotCompute>(BTC))
-				return true;
+	SmallVector<BasicBlock *, 4> exitingBlocks;
+	L->getExitingBlocks(exitingBlocks);
+	for (BasicBlock *BB : exitingBlocks) {
+		Instruction *term = BB->getTerminator();
+		control.insert(term);
+
+		if (isa<SCEVCouldNotCompute>(SE.getExitCount(L, BB)))
+			continue;
+		if (auto *BI = dyn_cast<BranchInst>(term)) {
+			if (BI->isConditional())
+				worklist.push_back(BI->getCondition());
 		}
 	}
 
-	if (I->isTerminator() && L->isLoopExiting(I->getParent()))
-		return true;
+	while (!worklist.empty()) {
+		auto *I = dyn_cast<Instruction>(worklist.pop_back_val());
+		if (!I || !L->contains(I) || !control.insert(I).second)
+			continue;
 
-	return false;
+		if (auto *Phi = dyn_cast<PHINode>(I)) {
+			// Only follow values coming around the loop (the increment), not the start value.
+			for (unsigned i = 0; i < Phi->getNumIncomingValues(); ++i) {
+				if (L->contains(Phi->getIncomingBlock(i)))
+					worklist.push_back(Phi->getIncomingValue(i));
+			}
+			continue;
+		}
+		for (Value *Op: I->operands())
+			worklist.push_back(Op);
+	}
+
+	return control;
 }
 
 	// Not safe to be ignored by dbg.pass.no.op, dbg information is tampered
 	//TODO: move this block into dbg pass and not here, would be much cleanr...
 void CounterFunctionAnalysis::annotateLoop(Loop *L, ScalarEvolution &SE, LLVMContext &Ctx) {
-	for (BasicBlock *BB : L->blocks()) {
-		for (Instruction &I : *BB) {
-			if (isa<GetElementPtrInst>(I)) {
-				continue;
-			}
-			if (isLoopControlInstruction(&I, L, SE)) {
-				I.setMetadata("ps.loop", MDNode::get(Ctx, {}));
-			}
+	for (Instruction *I : collectLoopControlInstructions(L, SE)) {
+		if (isa<GetElementPtrInst>(I)) {
+			continue;
 		}
+		I->setMetadata("ps.loop", MDNode::get(Ctx, {}));
 	}
 
 	for (Loop *SubL : L->getSubLoops())
