@@ -15,6 +15,14 @@ instructions_to_count:
 - getelementptr
 - icmp
 - br
+- fpext
+- fptrunc
+- fptoui
+- fptosi
+# not looked up for counting (that uses fptoui/fptosi), only needed so ic-pass emits the
+# "fptoui_double*" / "fptosi_double*" keys of double -> int conversions
+- fptoui_double
+- fptosi_double
 - llvm.fmuladd.f32
 - shared_load
 - shared_store

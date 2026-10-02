@@ -800,6 +800,13 @@ void CounterFunctionAnalysis::countInstructions(
 
       std::string configLookupName = opcode_name;
 
+      // double -> int is its own benchmark (INST_DOUBLE_TO_INT). The type part of the key is the
+      // integer result type, so the double source has to show up in the opcode part.
+      if ((llvm::isa<llvm::FPToUIInst>(&inst) || llvm::isa<llvm::FPToSIInst>(&inst)) &&
+          inst.getOperand(0)->getType()->isDoubleTy()) {
+        opcode_name += "_double";
+      }
+
       if (isUniform) {
         opcode_name = opcode_name + "_uniform";
       }
@@ -817,6 +824,10 @@ void CounterFunctionAnalysis::countInstructions(
         type = gep->getSourceElementType();
       } else if (llvm::isa<llvm::BranchInst>(&inst)) {
         type = llvm::Type::getVoidTy(inst.getContext());
+      } else if ((llvm::isa<llvm::FPToUIInst>(&inst) || llvm::isa<llvm::FPToSIInst>(&inst)) &&
+                 (inst.getOperand(0)->getType()->isFloatTy() || inst.getOperand(0)->getType()->isDoubleTy())) {
+        // float/double -> int is measured per integer result type (INST_FLOAT_TO_INT / INST_DOUBLE_TO_INT)
+        type = inst.getType();
       } else if (!llvm::isa<llvm::LoadInst>(&inst) && inst.getNumOperands() > 0) {
 	      type = inst.getOperand(0)->getType();
       }

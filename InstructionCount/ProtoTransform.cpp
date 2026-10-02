@@ -37,6 +37,14 @@ ValueType ProtoTransform::typeToProto(const std::string &type, const std::string
 		}
 	}
 
+  // LLVM integers carry no sign; fptosi results are measured under the signed types
+  if (llvm::StringRef(inst).starts_with("fptosi")) {
+    if (elemType == "i8") return TYPE_INT8;
+    if (elemType == "i16") return TYPE_INT16;
+    if (elemType == "i32") return TYPE_INT32;
+    if (elemType == "i64") return TYPE_INT64;
+  }
+
   if (elemType == "float") return TYPE_FP32;
   if (elemType == "double") return TYPE_FP64;
   if (elemType == "half") return TYPE_FP16;
@@ -150,6 +158,17 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	}
 	if (base == "br") {
 		return INST_BR;
+	}
+	if (base == "fpext" || base == "fptrunc") {
+		// float <-> double conversions; fpext is typed TYPE_FP32, fptrunc TYPE_FP64 (operand type)
+		return INST_FPDOUBLE_C;
+	}
+	// float/double -> int, typed by the integer result type; ICAnalyses tags a double source with "_double"
+	if (base == "fptoui" || base == "fptosi") {
+		return INST_FLOAT_TO_INT;
+	}
+	if (base == "fptoui_double" || base == "fptosi_double") {
+		return INST_DOUBLE_TO_INT;
 	}
   if (base.find("fma") != std::string::npos || base.find("fmuladd") != std::string::npos) {
     return INST_FMA;
