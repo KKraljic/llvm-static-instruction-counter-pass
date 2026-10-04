@@ -220,7 +220,12 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   	std::string json_output;
   	google::protobuf::util::JsonPrintOptions options;
   	options.add_whitespace = true;
+#if defined(GOOGLE_PROTOBUF_VERSION) && GOOGLE_PROTOBUF_VERSION < 5026000
   	options.always_print_primitive_fields = true;
+#else
+  	// Renamed in protobuf 26, old name removed later.
+  	options.always_print_fields_with_no_presence = true;
+#endif
   	options.preserve_proto_field_names = true;
 
   	auto status = google::protobuf::util::MessageToJsonString(report, &json_output, options);
