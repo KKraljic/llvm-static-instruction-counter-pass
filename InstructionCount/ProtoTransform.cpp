@@ -11,6 +11,11 @@ const llvm::StringMap<ValueType> ProtoTransform::InstTypeMap {
 	{"__hadd",  TYPE_FP16},
 	{"__hsub",  TYPE_FP16},
 	{"__hmul",  TYPE_FP16},
+	{"hlog", TYPE_FP16},
+	{"hlog2", TYPE_FP16},
+	{"hlog10", TYPE_FP16},
+	{"hexp", TYPE_FP16},
+	{"hsqrt", TYPE_FP16},
 	// br benchmark only registered UINT32
 	{"br",      TYPE_UINT32},
 };
@@ -193,13 +198,19 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	if (base == "__nv_tanf" || base == "__nv_tan") {
 		return INST_TAN;
 	}
-	if (base == "__nv_logf" || base == "__nv_log") {
+	if (base == "__nv_logf" || base == "__nv_log" || base == "hlog") {
 		return INST_LOG;
 	}
-	if (base == "__nv_expf" || base == "__nv_exp") {
+	if (base == "__nv_log2f" || base == "__nv_log2" || base == "hlog2") {
+		return INST_LOG2;
+	}
+	if (base == "__nv_log10f" || base == "__nv_log10" || base == "hlog10") {
+		return INST_LOG10;
+	}
+	if (base == "__nv_expf" || base == "__nv_exp" || base == "hexp") {
 		return INST_EXP;
 	}
-	if (base == "__nv_sqrtf" || base == "__nv_sqrt") {
+	if (base == "__nv_sqrtf" || base == "__nv_sqrt" || base == "hsqrt") {
 		return INST_SQRT;
 	}
   return INST_ERR;
