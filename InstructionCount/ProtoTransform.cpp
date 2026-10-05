@@ -160,15 +160,26 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 		return INST_BR;
 	}
 	if (base == "fpext" || base == "fptrunc") {
-		// float <-> double conversions; fpext is typed TYPE_FP32, fptrunc TYPE_FP64 (operand type)
 		return INST_FPDOUBLE_C;
 	}
-	// float/double -> int, typed by the integer result type; ICAnalyses tags a double source with "_double"
 	if (base == "fptoui" || base == "fptosi") {
 		return INST_FLOAT_TO_INT;
 	}
 	if (base == "fptoui_double" || base == "fptosi_double") {
 		return INST_DOUBLE_TO_INT;
+	}
+	// Bit-manipulation intrinsics (llvm.<op>.i<N>), typed by their operand type like the benchmarks
+	if (llvm::StringRef(base).starts_with("llvm.ctlz.")) {
+		return INST_CTLZ;
+	}
+	if (llvm::StringRef(base).starts_with("llvm.cttz.")) {
+		return INST_CTTZ;
+	}
+	if (llvm::StringRef(base).starts_with("llvm.ctpop.")) {
+		return INST_CTPOP;
+	}
+	if (llvm::StringRef(base).starts_with("llvm.bswap.")) {
+		return INST_BSWAP;
 	}
   if (base.find("fma") != std::string::npos || base.find("fmuladd") != std::string::npos) {
     return INST_FMA;
