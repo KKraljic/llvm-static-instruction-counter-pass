@@ -47,6 +47,12 @@ instructions_to_count:
 - __nv_cos
 - __nv_tanf
 - __nv_tan
+- __nv_logf
+- __nv_log
+- __nv_expf
+- __nv_exp
+- __nv_sqrtf
+- __nv_sqrt
 - __hadd
 - __hsub
 - llvm.nvvm.fma.rn.d

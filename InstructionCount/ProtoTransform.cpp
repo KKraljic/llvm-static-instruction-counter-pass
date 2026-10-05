@@ -193,6 +193,15 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	if (base == "__nv_tanf" || base == "__nv_tan") {
 		return INST_TAN;
 	}
+	if (base == "__nv_logf" || base == "__nv_log") {
+		return INST_LOG;
+	}
+	if (base == "__nv_expf" || base == "__nv_exp") {
+		return INST_EXP;
+	}
+	if (base == "__nv_sqrtf" || base == "__nv_sqrt") {
+		return INST_SQRT;
+	}
   return INST_ERR;
 }
 
