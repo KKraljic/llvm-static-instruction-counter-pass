@@ -7,6 +7,8 @@
 
 #include <llvm/IR/Instructions.h>
 
+#include <utility>
+
 const llvm::StringMap<ValueType> ProtoTransform::InstTypeMap {
 	{"__hadd",  TYPE_FP16},
 	{"__hsub",  TYPE_FP16},
@@ -15,6 +17,9 @@ const llvm::StringMap<ValueType> ProtoTransform::InstTypeMap {
 	{"hlog2", TYPE_FP16},
 	{"hlog10", TYPE_FP16},
 	{"hexp", TYPE_FP16},
+	{"hexp2", TYPE_FP16},
+	{"hexp10", TYPE_FP16},
+	{"htanh", TYPE_FP16},
 	{"hsqrt", TYPE_FP16},
 	// br benchmark only registered UINT32
 	{"br",      TYPE_UINT32},
@@ -186,6 +191,31 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	if (llvm::StringRef(base).starts_with("llvm.bswap.")) {
 		return INST_BSWAP;
 	}
+	// Generic LLVM math intrinsics
+	static const std::pair<llvm::StringLiteral, Instruction> mathIntrinsics[] = {
+		{"llvm.sqrt.", INST_SQRT},
+		{"llvm.pow.", INST_POW},
+		{"llvm.exp.", INST_EXP},
+		{"llvm.exp2.", INST_EXP2},
+		{"llvm.exp10.", INST_EXP10},
+		{"llvm.log.", INST_LOG},
+		{"llvm.log2.", INST_LOG2},
+		{"llvm.log10.", INST_LOG10},
+		{"llvm.sin.", INST_SIN},
+		{"llvm.cos.", INST_COS},
+		{"llvm.tan.", INST_TAN},
+		{"llvm.asin.", INST_ASIN},
+		{"llvm.acos.", INST_ACOS},
+		{"llvm.atan.", INST_ATAN},
+		{"llvm.sinh.", INST_SINH},
+		{"llvm.cosh.", INST_COSH},
+		{"llvm.tanh.", INST_TANH},
+	};
+	for (const auto &[prefix, inst]: mathIntrinsics) {
+		if (llvm::StringRef(base).starts_with(prefix)) {
+			return inst;
+		}
+	}
   if (base.find("fma") != std::string::npos || base.find("fmuladd") != std::string::npos) {
     return INST_FMA;
   }
@@ -209,6 +239,33 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	}
 	if (base == "__nv_expf" || base == "__nv_exp" || base == "hexp") {
 		return INST_EXP;
+	}
+	if (base == "__nv_exp2f" || base == "__nv_exp2" || base == "hexp2") {
+		return INST_EXP2;
+	}
+	if (base == "__nv_exp10f" || base == "__nv_exp10" || base == "hexp10") {
+		return INST_EXP10;
+	}
+	if (base == "__nv_sinhf" || base == "__nv_sinh") {
+		return INST_SINH;
+	}
+	if (base == "__nv_coshf" || base == "__nv_cosh") {
+		return INST_COSH;
+	}
+	if (base == "__nv_tanhf" || base == "__nv_tanh" || base == "htanh") {
+		return INST_TANH;
+	}
+	if (base == "__nv_asinf" || base == "__nv_asin") {
+		return INST_ASIN;
+	}
+	if (base == "__nv_acosf" || base == "__nv_acos") {
+		return INST_ACOS;
+	}
+	if (base == "__nv_atanf" || base == "__nv_atan") {
+		return INST_ATAN;
+	}
+	if (base == "__nv_powf" || base == "__nv_pow") {
+		return INST_POW;
 	}
 	if (base == "__nv_sqrtf" || base == "__nv_sqrt" || base == "hsqrt") {
 		return INST_SQRT;
