@@ -47,8 +47,9 @@ ValueType ProtoTransform::typeToProto(const std::string &type, const std::string
 		}
 	}
 
-  // LLVM integers carry no sign; fptosi results are measured under the signed types
-  if (llvm::StringRef(inst).starts_with("fptosi")) {
+  // LLVM integers carry no sign; fptosi results and srem (benchmark_mod on signed types) are
+  // measured under the signed types
+  if (llvm::StringRef(inst).starts_with("fptosi") || llvm::StringRef(inst).starts_with("srem")) {
     if (elemType == "i8") return TYPE_INT8;
     if (elemType == "i16") return TYPE_INT16;
     if (elemType == "i32") return TYPE_INT32;
@@ -139,6 +140,15 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
   if (base == "fmul" || base == "mul" || base == "__hmul") {
     return INST_MUL;
   }
+	if (base == "fneg") {
+		return INST_FNEG;
+	}
+	if (base == "fdiv") {
+		return INST_DIV;
+	}
+	if (base == "srem" || base == "urem") {
+		return INST_MOD;
+	}
 	if (base == "or") {
 		return INST_OR;
 	}

@@ -5,8 +5,11 @@ instructions_to_count:
 - sub
 - fmul
 - fdiv
+- srem
+- urem
 - fadd
 - fsub
+- fneg
 - fma
 - or
 - and
