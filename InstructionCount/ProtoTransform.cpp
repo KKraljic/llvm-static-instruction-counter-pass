@@ -21,6 +21,7 @@ const llvm::StringMap<ValueType> ProtoTransform::InstTypeMap {
 	{"hexp10", TYPE_FP16},
 	{"htanh", TYPE_FP16},
 	{"hsqrt", TYPE_FP16},
+	{"__habs", TYPE_FP16},
 	// br benchmark only registered UINT32
 	{"br",      TYPE_UINT32},
 };
@@ -146,6 +147,9 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	if (base == "fdiv") {
 		return INST_DIV;
 	}
+	if (base == "__nv_fabsf" || base == "__nv_fabs" || base == "__habs") {
+		return INST_ABS;
+	}
 	if (base == "srem" || base == "urem") {
 		return INST_MOD;
 	}
@@ -203,6 +207,7 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	}
 	// Generic LLVM math intrinsics
 	static const std::pair<llvm::StringLiteral, Instruction> mathIntrinsics[] = {
+		{"llvm.fabs.", INST_ABS},
 		{"llvm.sqrt.", INST_SQRT},
 		{"llvm.pow.", INST_POW},
 		{"llvm.exp.", INST_EXP},
