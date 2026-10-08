@@ -13,6 +13,10 @@ instructions_to_count:
 - fma
 - or
 - and
+- xor
+- shl
+- lshr
+- ashr
 - load
 - store
 - getelementptr
@@ -41,6 +45,9 @@ instructions_to_count:
 - llvm.bswap.i16
 - llvm.bswap.i32
 - llvm.bswap.i64
+# sycl::clz on CUDA
+- __nv_clz
+- __nv_clzll
 - llvm.fabs.f16
 - llvm.fabs.f32
 - llvm.fabs.f64

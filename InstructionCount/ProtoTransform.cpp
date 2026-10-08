@@ -48,9 +48,10 @@ ValueType ProtoTransform::typeToProto(const std::string &type, const std::string
 		}
 	}
 
-  // LLVM integers carry no sign; fptosi results and srem (benchmark_mod on signed types) are
-  // measured under the signed types
-  if (llvm::StringRef(inst).starts_with("fptosi") || llvm::StringRef(inst).starts_with("srem")) {
+  // LLVM integers carry no sign; fptosi results, srem, sdiv and ashr (benchmark_mod / benchmark_div / benchmark_shr
+  // on signed types) are measured under the signed types
+  if (llvm::StringRef(inst).starts_with("fptosi") || llvm::StringRef(inst).starts_with("srem") ||
+      llvm::StringRef(inst).starts_with("sdiv") || llvm::StringRef(inst).starts_with("ashr")) {
     if (elemType == "i8") return TYPE_INT8;
     if (elemType == "i16") return TYPE_INT16;
     if (elemType == "i32") return TYPE_INT32;
@@ -144,7 +145,7 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	if (base == "fneg") {
 		return INST_FNEG;
 	}
-	if (base == "fdiv") {
+	if (base == "fdiv" || base == "udiv" || base == "sdiv") {
 		return INST_DIV;
 	}
 	if (base == "__nv_fabsf" || base == "__nv_fabs" || base == "__habs") {
@@ -158,6 +159,16 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	}
 	if (base == "and") {
 		return INST_AND;
+	}
+	if (base == "xor") {
+		return INST_XOR;
+	}
+	if (base == "shl") {
+		return INST_SHL;
+	}
+	// lshr typed unsigned, ashr signed (see typeToProto)
+	if (base == "lshr" || base == "ashr") {
+		return INST_SHR;
 	}
 	if (base == "load") {
 		return INST_MEMORY_OP;
@@ -193,7 +204,8 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 		return INST_DOUBLE_TO_INT;
 	}
 	// Bit-manipulation intrinsics (llvm.<op>.i<N>), typed by their operand type like the benchmarks
-	if (llvm::StringRef(base).starts_with("llvm.ctlz.")) {
+	// sycl::clz lowers to __nv_clz / __nv_clzll on CUDA
+	if (llvm::StringRef(base).starts_with("llvm.ctlz.") || base == "__nv_clz" || base == "__nv_clzll") {
 		return INST_CTLZ;
 	}
 	if (llvm::StringRef(base).starts_with("llvm.cttz.")) {
@@ -210,21 +222,22 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 		{"llvm.fabs.", INST_ABS},
 		{"llvm.sqrt.", INST_SQRT},
 		{"llvm.pow.", INST_POW},
-		{"llvm.exp.", INST_EXP},
+		// log/exp are bounded by INST_LOG / INST_LOG_TEST and INST_EXP / INST_EXP_TEST
+		{"llvm.exp.", INST_EXP_REAL},
 		{"llvm.exp2.", INST_EXP2},
 		{"llvm.exp10.", INST_EXP10},
-		{"llvm.log.", INST_LOG},
+		{"llvm.log.", INST_LOG_REAL},
 		{"llvm.log2.", INST_LOG2},
 		{"llvm.log10.", INST_LOG10},
 		{"llvm.sin.", INST_SIN},
 		{"llvm.cos.", INST_COS},
 		{"llvm.tan.", INST_TAN},
-		{"llvm.asin.", INST_ASIN},
-		{"llvm.acos.", INST_ACOS},
-		{"llvm.atan.", INST_ATAN},
-		{"llvm.sinh.", INST_SINH},
-		{"llvm.cosh.", INST_COSH},
-		{"llvm.tanh.", INST_TANH},
+		{"llvm.asin.", INST_ASIN_REAL},
+		{"llvm.acos.", INST_ACOS_REAL},
+		{"llvm.atan.", INST_ATAN_REAL},
+		{"llvm.sinh.", INST_SINH_REAL},
+		{"llvm.cosh.", INST_COSH_REAL},
+		{"llvm.tanh.", INST_TANH_REAL},
 	};
 	for (const auto &[prefix, inst]: mathIntrinsics) {
 		if (llvm::StringRef(base).starts_with(prefix)) {
@@ -244,7 +257,7 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 		return INST_TAN;
 	}
 	if (base == "__nv_logf" || base == "__nv_log" || base == "hlog") {
-		return INST_LOG;
+		return INST_LOG_REAL;
 	}
 	if (base == "__nv_log2f" || base == "__nv_log2" || base == "hlog2") {
 		return INST_LOG2;
@@ -253,7 +266,7 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 		return INST_LOG10;
 	}
 	if (base == "__nv_expf" || base == "__nv_exp" || base == "hexp") {
-		return INST_EXP;
+		return INST_EXP_REAL;
 	}
 	if (base == "__nv_exp2f" || base == "__nv_exp2" || base == "hexp2") {
 		return INST_EXP2;
@@ -262,22 +275,26 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 		return INST_EXP10;
 	}
 	if (base == "__nv_sinhf" || base == "__nv_sinh") {
-		return INST_SINH;
+		return INST_SINH_REAL;
 	}
 	if (base == "__nv_coshf" || base == "__nv_cosh") {
-		return INST_COSH;
+		return INST_COSH_REAL;
 	}
-	if (base == "__nv_tanhf" || base == "__nv_tanh" || base == "htanh") {
+	if (base == "htanh") {
+		// INST_TANH_REAL needs INST_TANH_TEST, which only exists for float/double
 		return INST_TANH;
 	}
+	if (base == "__nv_tanhf" || base == "__nv_tanh") {
+		return INST_TANH_REAL;
+	}
 	if (base == "__nv_asinf" || base == "__nv_asin") {
-		return INST_ASIN;
+		return INST_ASIN_REAL;
 	}
 	if (base == "__nv_acosf" || base == "__nv_acos") {
-		return INST_ACOS;
+		return INST_ACOS_REAL;
 	}
 	if (base == "__nv_atanf" || base == "__nv_atan") {
-		return INST_ATAN;
+		return INST_ATAN_REAL;
 	}
 	if (base == "__nv_powf" || base == "__nv_pow") {
 		return INST_POW;
