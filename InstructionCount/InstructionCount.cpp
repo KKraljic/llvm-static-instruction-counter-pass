@@ -33,6 +33,7 @@
 
 #include "interface.pb.h"
 
+using namespace energy_estimation;
 using namespace llvm;
 
 namespace IC {
@@ -149,6 +150,17 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   						if (EMDebugEnabled()) outs() << "Add Instruction to output: " << prefix << " - " << instKey << "\n";
   					}
   				}
+  			}
+  		}
+  	}
+
+  	// inline asm ("asm:<PTX-inst>*<type>") are always counted
+  	const std::string asmPrefix = ProtoTransform::kInlineAsmPrefix.str();
+  	for (auto &[F, FR] : MR.function_results) {
+  		for (auto it = FR.instruction_costs.lower_bound(asmPrefix);
+  		     it != FR.instruction_costs.end() && it->first.rfind(asmPrefix, 0) == 0; ++it) {
+  			if (!llvm::is_contained(headerInsts, it->first)) {
+  				headerInsts.push_back(it->first);
   			}
   		}
   	}
@@ -308,6 +320,17 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
 
             ostream << "," << instKey;
           }
+        }
+      }
+    }
+
+    const std::string asmPrefix = ProtoTransform::kInlineAsmPrefix.str();
+    for (auto &[F, FR] : MR.function_results) {
+      for (auto it = FR.instruction_costs.lower_bound(asmPrefix);
+           it != FR.instruction_costs.end() && it->first.rfind(asmPrefix, 0) == 0; ++it) {
+        if (!llvm::is_contained(headerInsts, it->first)) {
+          headerInsts.push_back(it->first);
+          ostream << "," << it->first;
         }
       }
     }

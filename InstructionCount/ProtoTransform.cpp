@@ -5,9 +5,15 @@
 #include "DebugToggle.hpp"
 #include "ProtoTransform.hpp"
 
+#include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/SmallVector.h>
+#include <llvm/IR/InlineAsm.h>
+#include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instructions.h>
 
 #include <utility>
+
+using namespace energy_estimation;
 
 const llvm::StringMap<ValueType> ProtoTransform::InstTypeMap {
 	{"__hadd",  TYPE_FP16},
@@ -32,9 +38,59 @@ std::string capitalize(std::string s) {
 	return s;
 }
 
+const llvm::StringLiteral ProtoTransform::inlineAsmPrefix = "asm:";
+
+static llvm::StringRef inlineAsmMnemonic(llvm::StringRef inst) {
+	return inst.drop_front(ProtoTransform::inlineAsmPrefix.size()).split('_').first;
+}
+
+static bool isF16Ptx(llvm::StringRef mnemonic) {
+	llvm::SmallVector<llvm::StringRef> parts;
+	mnemonic.split(parts, '.');
+	return llvm::is_contained(parts, "f16") || llvm::is_contained(parts, "f16x2");
+}
+
+// Some ptx instructions, everything else is INST_ERR for the moment and not covered
+static Instruction ptxToProto(llvm::StringRef mnemonic) {
+	if (!isF16Ptx(mnemonic)) return INST_ERR;
+	static const llvm::StringMap<Instruction> ptxOps{
+		{"add", INST_ADD},
+		{"sub", INST_SUB},
+		{"mul", INST_MUL},
+		{"fma", INST_FMA},
+		{"neg", INST_FNEG},
+		{"abs", INST_ABS},
+		{"ex2", INST_EXP2},
+	};
+	auto it = ptxOps.find(mnemonic.split('.').first);
+	return it == ptxOps.end() ? INST_ERR : it->second;
+}
+
+std::string countedInlineAsmName(const llvm::Instruction &inst) {
+	const auto *call = llvm::dyn_cast<llvm::CallBase>(&inst);
+	if (!call || !call->isInlineAsm()) return "";
+
+	llvm::StringRef asmStr = llvm::cast<llvm::InlineAsm>(call->getCalledOperand())->getAsmString();
+	asmStr = asmStr.trim(" \t\r\n{}");
+	if (asmStr.contains('\n') || asmStr.count(';') != 1 || !asmStr.ends_with(";")) return "";
+
+	std::string mnemonic = asmStr.take_until([](char c) { return c == ' ' || c == '\t'; }).str();
+	if (inst.getMetadata("dbg.pass.fma") && isF16Ptx(mnemonic)) {
+		mnemonic = "fma" + mnemonic.substr(mnemonic.find('.'));
+	}
+	const std::string name = (ProtoTransform::inlineAsmPrefix + mnemonic).str();
+	bool isUniform = false;
+	if (ProtoTransform::instToProto(name, isUniform) == INST_ERR) return "";
+	return name;
+}
+
 ValueType ProtoTransform::typeToProto(const std::string &type, const std::string &inst) {
 	if (ProtoTransform::InstTypeMap.contains(inst)) {
 		return ProtoTransform::InstTypeMap.at(inst);
+	}
+
+	if (llvm::StringRef(inst).starts_with(inlineAsmPrefix) && isF16Ptx(inlineAsmMnemonic(inst))) {
+		return TYPE_FP16;
 	}
 
 	if (EMDebugEnabled()) std::cout << "typeToProto: " << type << std::endl;
@@ -131,6 +187,10 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	if (llvm::StringRef(k).ends_with(kUniformSuffix)) {
 		isUniform = true;
 		base = k.substr(0, k.size() - kUniformSuffix.size());
+	}
+
+	if (llvm::StringRef(base).starts_with(inlineAsmPrefix)) {
+		return ptxToProto(inlineAsmMnemonic(base));
 	}
 
   if (base == "fadd" || base == "add" || base == "__hadd") {

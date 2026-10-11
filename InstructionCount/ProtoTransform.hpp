@@ -10,7 +10,7 @@
 
 #include "interface.pb.h"
 
-using namespace energy_estimation;
+#include <string>
 
 struct InstKey {
   unsigned opcode;
@@ -24,16 +24,20 @@ struct InstKey {
 
 class ProtoTransform {
 public:
+  static const llvm::StringLiteral inlineAsmPrefix;
+
   static energy_estimation::ValueType typeToProto(const std::string &type, const std::string &inst);
   static energy_estimation::ValueType typeToProto(llvm::Type* type);
   static std::string typeToString(llvm::Type* type);
   static energy_estimation::Instruction instToProto(const std::string &k, bool &isUniform);
   static energy_estimation::Instruction instToProto(const InstKey &k);
 private:
-	static const llvm::StringMap<ValueType> InstTypeMap;
+	static const llvm::StringMap<energy_estimation::ValueType> InstTypeMap;
   static std::string typeStr(llvm::Type *type);
 	std::string instName(const InstKey &k);
 };
 
+// Opcode name for a call to one-statement inline asm (fp16 ops are only inline asm)
+std::string countedInlineAsmName(const llvm::Instruction &inst);
 
 #endif //EPI_PEN_PROTOTRANSFORM_H

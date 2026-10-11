@@ -1,5 +1,6 @@
 #include "DebugToggle.hpp"
 #include "ICAnalyses.hpp"
+#include "ProtoTransform.hpp"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -789,10 +790,13 @@ void CounterFunctionAnalysis::countInstructions(
       bool isFSub = inst.getMetadata("dbg.pass.fsub") != nullptr;
       bool isFMul = inst.getMetadata("dbg.pass.fmul") != nullptr;
       bool isUniform = inst.getMetadata("dbg.pass.uniform") != nullptr;
+      const std::string inlineAsmName = countedInlineAsmName(inst);
       if (isSharedLoad) {
         opcode_name = "shared_load";
       } else if (isSharedStore) {
         opcode_name = "shared_store";
+      } else if (!inlineAsmName.empty()) {
+        opcode_name = inlineAsmName;
       } else if (isFma || isFAdd || isFSub || isFMul) {
         // TODO: handling on energy-estimation side, for now map fadd, fmul, fsub to fma (same pipeline)
         opcode_name = "fma";
@@ -822,6 +826,11 @@ void CounterFunctionAnalysis::countInstructions(
 
       if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(&inst)) {
         type = gep->getSourceElementType();
+        // single member structs can use the member type right away
+        while (auto *structTy = llvm::dyn_cast<llvm::StructType>(type)) {
+          if (structTy->getNumElements() != 1) break;
+          type = structTy->getElementType(0);
+        }
       } else if (llvm::isa<llvm::BranchInst>(&inst)) {
         type = llvm::Type::getVoidTy(inst.getContext());
       } else if ((llvm::isa<llvm::FPToUIInst>(&inst) || llvm::isa<llvm::FPToSIInst>(&inst)) &&
@@ -874,7 +883,8 @@ void CounterFunctionAnalysis::countInstructions(
       if (EMDebugEnabled()) llvm::outs() << "Processing Instruction: " << opcode_name << "\n";
     	bool isDbgMarked = (inst.getMetadata("dbg.pass.no.op") != nullptr);
     	bool isLoopMarked = inst.getMetadata("ps.loop") != nullptr;
-      bool dontCount = (it == config.instructions_to_count.end()) || (isDbgMarked && !isLoopMarked);
+      bool isListed = it != config.instructions_to_count.end() || !inlineAsmName.empty();
+      bool dontCount = !isListed || (isDbgMarked && !isLoopMarked);
       bool isCallOrInvoke = isa<CallInst, InvokeInst>(inst);
       if (dontCount && !isCallOrInvoke) {
         continue;
