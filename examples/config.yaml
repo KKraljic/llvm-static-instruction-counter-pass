@@ -152,6 +152,7 @@ instructions_to_count:
 - hsqrt
 - __hadd
 - __hsub
+- __hmul
 - llvm.nvvm.fma.rn.d
 - llvm.nvvm.mul.rn.d
 - llvm.nvvm.sqrt.rn.d
