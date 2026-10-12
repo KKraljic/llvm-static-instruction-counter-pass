@@ -155,7 +155,7 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   	}
 
   	// inline asm ("asm:<PTX-inst>*<type>") are always counted
-  	const std::string asmPrefix = ProtoTransform::kInlineAsmPrefix.str();
+  	const std::string asmPrefix = ProtoTransform::inlineAsmPrefix.str();
   	for (auto &[F, FR] : MR.function_results) {
   		for (auto it = FR.instruction_costs.lower_bound(asmPrefix);
   		     it != FR.instruction_costs.end() && it->first.rfind(asmPrefix, 0) == 0; ++it) {
@@ -324,7 +324,7 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
       }
     }
 
-    const std::string asmPrefix = ProtoTransform::kInlineAsmPrefix.str();
+    const std::string asmPrefix = ProtoTransform::inlineAsmPrefix.str();
     for (auto &[F, FR] : MR.function_results) {
       for (auto it = FR.instruction_costs.lower_bound(asmPrefix);
            it != FR.instruction_costs.end() && it->first.rfind(asmPrefix, 0) == 0; ++it) {
