@@ -826,10 +826,16 @@ void CounterFunctionAnalysis::countInstructions(
 
       if (auto *gep = llvm::dyn_cast<llvm::GetElementPtrInst>(&inst)) {
         type = gep->getSourceElementType();
-        // single member structs can use the member type right away
-        while (auto *structTy = llvm::dyn_cast<llvm::StructType>(type)) {
-          if (structTy->getNumElements() != 1) break;
-          type = structTy->getElementType(0);
+        // arrays and single member structs can use the element / member type right away
+        while (true) {
+          if (auto *arrayTy = llvm::dyn_cast<llvm::ArrayType>(type)) {
+            type = arrayTy->getElementType();
+          } else if (auto *structTy = llvm::dyn_cast<llvm::StructType>(type);
+                     structTy && structTy->getNumElements() == 1) {
+            type = structTy->getElementType(0);
+          } else {
+            break;
+          }
         }
       } else if (llvm::isa<llvm::BranchInst>(&inst)) {
         type = llvm::Type::getVoidTy(inst.getContext());
