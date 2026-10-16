@@ -131,8 +131,7 @@ ExprHandle reduce(const ExprHandle expr) {
                 can_be_added = false;
               }
 
-              // Monomials match only if every variable (letter/id/exponent) pairs up one-to-one,
-              // not just terms[0] -- otherwise e.g. "8*n0*n2" and "n0*n1" were wrongly merged.
+              // Two products can only be added up if they contain exactly the same variables
               if (can_be_added) {
                 std::vector<bool> matched(mul_term2->terms.size(), false);
                 for (auto &t1 : mul_term->terms) {

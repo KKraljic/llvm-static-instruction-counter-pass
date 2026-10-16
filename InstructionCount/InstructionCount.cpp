@@ -278,7 +278,6 @@ struct InstructionCount : PassInfoMixin<InstructionCount> {
   }
 
   bool outputToCsv(Module &M, const CounterModuleAnalysis::Result &MR,
-
   Config &config, const std::string &energy_model_name) {
     std::string output_str{};
     raw_string_ostream ostream{output_str};

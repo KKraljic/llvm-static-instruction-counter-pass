@@ -10,7 +10,6 @@
 #include <llvm/Demangle/Demangle.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
-#include <llvm/Transforms/Utils/ValueMapper.h>
 
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
@@ -18,6 +17,7 @@
 #include "llvm/MC/TargetRegistry.h"         // TargetRegistry
 #include "llvm/TargetParser/Host.h"         // getDefaultTargetTriple
 #include "llvm/Target/TargetMachine.h"
+#include <optional>
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
@@ -191,96 +191,75 @@ ConfigReader::Result ConfigReader::run(Module &M, ModuleAnalysisManager &MAM) {
   return config;
 }
 
-	// Need this function to compute values for loop variables from IC count (n0, n1, ...)
-Function *buildSCEVFunction(LLVMContext &Ctx, ScalarEvolution &SE,
-                             const SCEV *S, Module *OrigM, Module* NewM) {
+// Collects the SCEV free variables
+static void collectSCEVUnknowns(const SCEV *Expr, SmallVectorImpl<Value *> &FreeVars,
+                                SmallPtrSetImpl<Value *> &Seen) {
+  if (const auto *U = dyn_cast<SCEVUnknown>(Expr)) {
+    if (Seen.insert(U->getValue()).second)
+      FreeVars.push_back(U->getValue());
+    return;
+  }
+  // Recurse into operands
+  if (const auto *NAry = dyn_cast<SCEVNAryExpr>(Expr))
+    for (const SCEV *Op : NAry->operands()) collectSCEVUnknowns(Op, FreeVars, Seen);
+  else if (const auto *Cast = dyn_cast<SCEVCastExpr>(Expr))
+    collectSCEVUnknowns(Cast->getOperand(), FreeVars, Seen);
+  else if (const auto *UDiv = dyn_cast<SCEVUDivExpr>(Expr)) {
+    collectSCEVUnknowns(UDiv->getLHS(), FreeVars, Seen);
+    collectSCEVUnknowns(UDiv->getRHS(), FreeVars, Seen);
+  }
+}
 
-  Type *SCEVTy = S->getType();
-    SmallVector<Value *, 4> FreeVars;
-    SmallPtrSet<Value *, 4> Seen;
+// Need this function to compute values for loop variables from IC count (n0, n1, ...)
+void buildSCEVFunction(LLVMContext &Ctx, ScalarEvolution &SE,
+                       const SCEV *S, Module* NewM) {
 
-    // Walk the SCEV to find all SCEVUnknown leaves
-    std::function<void(const SCEV *)> collectVars = [&](const SCEV *Expr) {
-        if (const auto *U = dyn_cast<SCEVUnknown>(Expr)) {
-            if (Seen.insert(U->getValue()).second)
-                FreeVars.push_back(U->getValue());
-            return;
-        }
-        // Recurse into operands
-        if (const auto *NAry = dyn_cast<SCEVNAryExpr>(Expr))
-            for (const SCEV *Op : NAry->operands()) collectVars(Op);
-        else if (const auto *Cast = dyn_cast<SCEVCastExpr>(Expr))
-            collectVars(Cast->getOperand());
-        else if (const auto *UDiv = dyn_cast<SCEVUDivExpr>(Expr)) {
-            collectVars(UDiv->getLHS());
-            collectVars(UDiv->getRHS());
-        }
-    };
-    collectVars(S);
+	Type *SCEVTy = S->getType();
+	SmallVector<Value *, 4> FreeVars;
+	SmallPtrSet<Value *, 4> Seen;
 
-    // Build function signature — one i64 param per free variable
+  // Find all SCEVUnknown vars
+  collectSCEVUnknowns(S, FreeVars, Seen);
+
+  // function signature — one i64 param per free variable
   SmallVector<Type *, 4> ParamTypes;
-  for (Value *V : FreeVars)
-    ParamTypes.push_back(V->getType());
+  for (Value *V : FreeVars) {
+	  ParamTypes.push_back(V->getType());
+  }
 
   FunctionType *FT = FunctionType::get(SCEVTy, ParamTypes, false);
+  Function *F = Function::Create(FT, Function::ExternalLinkage, "scev_eval", NewM);
 
-    Function *F = Function::Create(FT, Function::ExternalLinkage, "scev_eval", NewM);
+  // Name the parameters after the original values
+  for (auto [Idx, Arg] : llvm::enumerate(F->args())) {
+		Arg.setName(FreeVars[Idx]->getName() + "_arg");
+  }
 
-    // Name the parameters after the original values
-    for (auto [Idx, Arg] : llvm::enumerate(F->args())) {
-        Arg.setName(FreeVars[Idx]->getName() + "_arg");
-    }
+  BasicBlock *Entry = BasicBlock::Create(Ctx, "entry", F);
+  IRBuilder<> B(Entry);
+  Instruction *Ret = B.CreateRet(UndefValue::get(SCEVTy));
 
-    BasicBlock *Entry = BasicBlock::Create(Ctx, "entry", F);
-    IRBuilder<> B(Entry);
-    Instruction *Ret = B.CreateRet(UndefValue::get(SCEVTy));
+  // Rewrite the SCEV, replacing each free variable with the matching function argument
+  ValueToSCEVMapTy ArgMap;
+  for (auto [Idx, FreeVar] : llvm::enumerate(FreeVars))
+    ArgMap[FreeVar] = SE.getUnknown(F->getArg(Idx));
+  const SCEV *RemappedS = SCEVParameterRewriter::rewrite(S, SE, ArgMap);
 
-    // Rewrite the SCEV replacing free vars with function arguments
-    // Build a map: original Value* -> new Argument*
-    ValueToValueMapTy VMap;
-    for (auto [Idx, FreeVar] : llvm::enumerate(FreeVars)) {
-        VMap[FreeVar] = F->getArg(Idx);
-    }
+  // Expand the remapped SCEV into the new function
+  SCEVExpander Exp(SE, NewM->getDataLayout(), "scev-extract");
+  Value *V = Exp.expandCodeFor(RemappedS, SCEVTy, Ret);
 
-    // Replace SCEVUnknown values using SE.rewriteSCEV or manual substitution
-    auto remapSCEV = [&](const SCEV *Expr) -> const SCEV * {
-        // Replace each SCEVUnknown with a new SCEVUnknown wrapping the new arg
-        struct Rewriter : public SCEVRewriteVisitor<Rewriter> {
-            ValueToValueMapTy &VMap;
-            Rewriter(ScalarEvolution &SE, ValueToValueMapTy &VMap)
-                : SCEVRewriteVisitor(SE), VMap(VMap) {}
+  B.SetInsertPoint(Ret);
+  Value *Zero = ConstantInt::get(SCEVTy, 0);
+  Value *IsNeg = B.CreateICmpSLT(V, Zero, "is_neg");
+  Value *Clamped = B.CreateSelect(IsNeg, Zero, V, "clamped");
 
-            const SCEV *visitUnknown(const SCEVUnknown *Expr) {
-                auto It = VMap.find(Expr->getValue());
-                if (It != VMap.end())
-                    return SE.getUnknown(It->second);
-                return Expr;
-            }
-        };
-        Rewriter RW(SE, VMap);
-        return RW.visit(Expr);
-    };
+  Ret->setOperand(0, Clamped);
 
-    const SCEV *RemappedS = remapSCEV(S);
-
-    // Expand the remapped SCEV into the new function
-    SCEVExpander Exp(SE, NewM->getDataLayout(), "scev-extract");
-    Value *V = Exp.expandCodeFor(RemappedS, SCEVTy, Ret);
-
-    B.SetInsertPoint(Ret);
-    Value *Zero = ConstantInt::get(SCEVTy, 0);
-    Value *IsNeg = B.CreateICmpSLT(V, Zero, "is_neg");
-    Value *Clamped = B.CreateSelect(IsNeg, Zero, V, "clamped");
-
-    Ret->setOperand(0, Clamped);
-
-    if (EMDebugEnabled()) {
-      errs() << "Extracted SCEV Function\n";
-      F->print(outs());
-    }
-
-    return F;
+  if (EMDebugEnabled()) {
+    errs() << "Extracted SCEV Function\n";
+    F->print(outs());
+  }
 }
 
 template <typename T>
@@ -378,8 +357,7 @@ CounterFunctionAnalysis::run(Function &F, FunctionAnalysisManager &FAM) {
   return result + ")";
 }
 
-  // Wrapper
-  std::string printValueTree(Value *V) {
+std::string printValueTree(Value *V) {
   SmallPtrSet<Value*, 8> visited;
   return printValueTree(V, visited);
 }
@@ -392,11 +370,9 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
   if (EMDebugEnabled()) outs() << "Create Expressions For loops\n";
   if (config.verbose)
     outs() << "Assigning vars to the loops:\n";
-  for (auto &[bounds, loops] : BoTL) {
+  for (auto &[btc, loops] : BoTL) {
     if (EMDebugEnabled()) {
-      outs() << "  Start: " << *bounds.start << "\n";
-      outs() << "  Step: " << *bounds.step << "\n";
-      outs() << "  btc: " << *bounds.btc << "\n";
+      outs() << "  btc: " << *btc << "\n";
       outs() << "\n";
     }
 
@@ -404,12 +380,12 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
     std::string loopBTC;
     llvm::raw_string_ostream rso(loopBTC);
 
-    rso << *bounds.btc;
+    rso << *btc;
     rso.flush();   // important
 
-    std::unique_ptr<llvm::Module> loopModule = std::move(loopNMap.at(bounds.btc));
+    std::unique_ptr<llvm::Module> loopModule = std::move(loopNMap.at(btc));
     loopModule->setModuleIdentifier("n"+std::to_string(nNumber));
-  	
+
     std::filesystem::path scevDir(".");
     if (auto icOutputDir = std::getenv("IC_OUTPUT_DIR")) {
       scevDir = std::filesystem::path(icOutputDir) / "ic-count-scev";
@@ -451,6 +427,35 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
       errs() << "Added " << loop_exprs[loop] << " to a loop\n";
   }
 }
+
+// for the scev_eval modules
+struct HostTarget {
+  std::string Triple;
+  std::optional<DataLayout> DL;
+};
+
+static HostTarget createHostTarget() {
+  llvm::InitializeNativeTarget();
+  HostTarget Host{llvm::sys::getDefaultTargetTriple(), std::nullopt};
+
+  std::string Error;
+  const llvm::Target *Target = llvm::TargetRegistry::lookupTarget(Host.Triple, Error);
+  if (!Target) {
+    outs() << "Failed to lookup target: " << Error << "\n";
+    return Host;
+  }
+  std::unique_ptr<llvm::TargetMachine> TM(
+    Target->createTargetMachine(Host.Triple, "generic", "", {}, std::nullopt)
+  );
+  Host.DL = TM->createDataLayout();
+  return Host;
+}
+
+static const HostTarget &getHostTarget() {
+  static const HostTarget Host = createHostTarget();
+  return Host;
+}
+
   void CounterFunctionAnalysis::assignLoopsToLoopBounds(
       BoundsToLoops &BTL, std::map<std::string, std::string> &loop_bound_map,
       std::map<const SCEV*, std::unique_ptr<llvm::Module>> &loopNMap,
@@ -480,217 +485,51 @@ void CounterFunctionAnalysis::createExpressionsForLoops(
     }
   }
 
-  const SCEV *Start = nullptr;
-  const SCEV *Step  = nullptr;
-  const SCEV *BTC   = nullptr;
-
-  // First try LLVM's canonical induction variable.
-  if (PHINode *IV = loop->getInductionVariable(SE)) {
-
-      if (EMDebugEnabled()) outs() << "  -> induction variable: " << *IV << "\n";
-
-      if (const auto *AR =
-              dyn_cast<SCEVAddRecExpr>(SE.getSCEV(IV))) {
-
-          Start = AR->getStart();
-          Step  = AR->getStepRecurrence(SE);
-          BTC   = SE.getBackedgeTakenCount(loop);
-      }
-  }
-
-  // ------------------------------------------------------------
-  // Fallback: search all PHIs in the loop header.
-  // ------------------------------------------------------------
-  if (!Start) {
-
-      for (PHINode &Phi : loop->getHeader()->phis()) {
-
-          const SCEV *S =  nullptr;
-          if (SE.isSCEVable(Phi.getType())) {
-            if (EMDebugEnabled()) outs() << "is scevable\n";
-            S = SE.getSCEV(&Phi);
-          } else {
-            if (EMDebugEnabled()) outs() << "is not scevable\n";
-            continue;
-          }
-
-
-          if (const auto *AR =
-                  dyn_cast<SCEVAddRecExpr>(S)) {
-
-              if (EMDebugEnabled()) outs() << "  -> non-canonical IV: " << Phi << "\n";
-
-              Start = AR->getStart();
-              Step  = AR->getStepRecurrence(SE);
-              BTC   = SE.getBackedgeTakenCount(loop);
-
-              break;
-          } else if (const auto *AR = dyn_cast<SCEVMulExpr>(S)) {
-            if (EMDebugEnabled()) outs() << "   -> scev mul expr\n";
-              BTC = SE.getBackedgeTakenCount(loop);
-          } else {
-
-              if (EMDebugEnabled()) {
-                outs() << "  -> non AddRec SCEV type: " << *S << "\n";
-
-                switch (S->getSCEVType()) {
-                  case scConstant:
-                    outs() << "     kind: constant\n";
-                    break;
-
-                  case scTruncate:
-                    outs() << "     kind: truncate\n";
-                    break;
-
-                  case scZeroExtend:
-                    outs() << "     kind: zero extend\n";
-                    break;
-
-                  case scSignExtend:
-                    outs() << "     kind: sign extend\n";
-                    break;
-
-                  case scAddExpr:
-                    outs() << "     kind: add expression\n";
-                    break;
-
-                  case scMulExpr:
-                    outs() << "     kind: multiply expression\n";
-                    break;
-
-                  case scUDivExpr:
-                    outs() << "     kind: unsigned division\n";
-                    break;
-
-                  case scSMaxExpr:
-                  case scUMaxExpr:
-                    outs() << "     kind: max expression\n";
-                    break;
-
-                  case scUnknown:
-                    outs() << "     kind: unknown (SCEVUnknown)\n";
-                    break;
-
-                  default:
-                    outs() << "     kind: other\n";
-                    break;
-                }
-              }
-
-              BTC = SE.getBackedgeTakenCount(loop);
-          }
-
-      }
-  }
-
-  // ------------------------------------------------------------
-  // Give up if we still have no induction variable.
-  // ------------------------------------------------------------
-  if (!Start || !Step || !BTC) {
-    outs() << "   -> !Start || !Step || !BTC\n";
-      unbounded_loops.push_back(loop);
-      return;
-  }
-
-  // ------------------------------------------------------------
-  // Check whether SCEV could compute trip count.
-  // ------------------------------------------------------------
+  // The trip count only depends on the backedge-taken count, so loops with the same count share one nK
+  const SCEV *BTC = SE.getBackedgeTakenCount(loop);
   if (isa<SCEVCouldNotCompute>(BTC)) {
     outs() << "   -> isa<SCEVCouldNotCompute>(BTC)\n";
-      unbounded_loops.push_back(loop);
-      return;
+    unbounded_loops.push_back(loop);
+    return;
   }
 
-
-  Type *IVTy  = Step->getType();
-  Type *BTCTy = BTC->getType();
-
-  // Decide which is wider
-  Type *WideTy = (BTCTy->getIntegerBitWidth() > IVTy->getIntegerBitWidth())
-               ? BTCTy : IVTy;
-  const SCEV *WideStart = SE.getNoopOrSignExtend(Start, WideTy);
-  const SCEV *WideStep  = SE.getNoopOrSignExtend(Step,  WideTy);
-  const SCEV *WideBTC   = SE.getNoopOrZeroExtend(BTC,   WideTy);
-
-  // ------------------------------------------------------------
-  // Construct "last value" of the IV.
-  // final = Start + Step * BTC
-  // ------------------------------------------------------------
-  const SCEV *Final =
-      SE.getAddExpr(
-          WideStart,
-          SE.getMulExpr(WideStep, WideBTC));
+  // A loop with the same count was seen before: its scev_eval module is reused
+  if (loopNMap.count(BTC)) {
+    BTL[BTC].push_back(loop);
+    return;
+  }
 
   llvm::LLVMContext& Ctx = header->getContext();
   auto NewM = std::make_unique<Module>("scev_module", Ctx);
 
-  llvm::InitializeNativeTarget();
-  auto Triple = llvm::sys::getDefaultTargetTriple();
-  NewM->setTargetTriple(Triple);
-
-  std::string Error;
-  const llvm::Target *Target = llvm::TargetRegistry::lookupTarget(Triple, Error);
-  if (!Target) {
-    outs() << "Failed to lookup target: " << Error << "\n";
+  const HostTarget &Host = getHostTarget();
+  if (!Host.DL)
     return;
-  }
-
-
-  std::unique_ptr<llvm::TargetMachine> TM(
-    Target->createTargetMachine(Triple, "generic", "", {}, std::nullopt)
-  );
-  NewM->setDataLayout(TM->createDataLayout());
+  NewM->setTargetTriple(Host.Triple);
+  NewM->setDataLayout(*Host.DL);
 
   const SCEV *TripCount = SE.getTripCountFromExitCount(BTC);
 
-  Function *scevF = buildSCEVFunction(Ctx, SE, TripCount, header->getModule(), NewM.get());
-
-  // Add main calling scev_eval with n=100
-  //addMainWrapper(*NewM, scevF);
+  buildSCEVFunction(Ctx, SE, TripCount, NewM.get());
 
   if (EMDebugEnabled()) {
     errs() << "=== Full Module ===\n";
     NewM->print(errs(), nullptr);
 
-    outs() << "  Start = " << *Start << "\n";
-    outs() << "  Step  = " << *Step  << "\n";
     outs() << "  BTC   = " << *BTC   << "\n";
     outs() << "  TripCount (what scev_eval actually computes) = " << *TripCount << "\n";
-    outs() << "  Final = " << *Final << "\n";
-    //outs() << " Expanded btc: " << *newF << "\n";
 
     outs() << "Loop: " << loop->getLoopID() << "\n";
   }
 
   loopNMap[BTC] = std::move(NewM);
 
-  // ------------------------------------------------------------
-  // If your LoopBoundKey stores SCEVs:
-  // ------------------------------------------------------------
-  LoopBoundKeySCEV Key{
-      const_cast<SCEV *>(Start),
-      const_cast<SCEV *>(Step),
-      const_cast<SCEV *>(BTC)
-  };
-
-  BTL[Key].push_back(loop);
+  BTL[BTC].push_back(loop);
 }
 
 // Helper: get the loop-invariant operand from the exit icmp
 Value *CounterFunctionAnalysis::extractBoundFromExitCondition(Loop *loop) {
-
-  PHINode *Phi = loop->getCanonicalInductionVariable();
-  if (!Phi) return nullptr;
-
-  Value *Initial = nullptr;
-  for (unsigned i = 0; i < Phi->getNumIncomingValues(); ++i) {
-    BasicBlock *Pred = Phi->getIncomingBlock(i);
-    if (!loop->contains(Pred)) {
-      Initial = Phi->getIncomingValue(i);
-      break;
-    }
-  }
-
+  if (!loop->getCanonicalInductionVariable()) return nullptr;
 
   BasicBlock *exitingBB = loop->getExitingBlock();
   if (!exitingBB) return nullptr;

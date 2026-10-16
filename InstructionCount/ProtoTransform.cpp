@@ -190,12 +190,12 @@ std::string ProtoTransform::typeToString(llvm::Type* type) {
 energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k, bool &isUniform) {
 	if (EMDebugEnabled()) std::cout << "instToProto: " << k << std::endl;
 
-	static constexpr llvm::StringLiteral kUniformSuffix = "_uniform";
+	constexpr llvm::StringLiteral uniformSuffix = "_uniform";
 	std::string base = k;
 	isUniform = false;
-	if (llvm::StringRef(k).ends_with(kUniformSuffix)) {
+	if (llvm::StringRef(k).ends_with(uniformSuffix)) {
 		isUniform = true;
-		base = k.substr(0, k.size() - kUniformSuffix.size());
+		base = k.substr(0, k.size() - uniformSuffix.size());
 	}
 
 	if (llvm::StringRef(base).starts_with(inlineAsmPrefix)) {
@@ -243,8 +243,8 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 		return INST_MEMORY_OP;
 	}
 	if (base == "store") {
-		// Generic memory op, not assumed to be an L1 hit -- CacheHitRateConfig later splits
-		// the resulting MEMORY_OP count across L1/L2/main-memory.
+		// Generic memory op, CacheHitRateConfig later splits
+		// the MEMORY_OP count across L1/L2/main-memory.
 		return INST_MEMORY_OP;
 	}
 	if (base == "shared_load") {

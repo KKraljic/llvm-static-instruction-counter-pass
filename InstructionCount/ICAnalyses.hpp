@@ -72,34 +72,7 @@ struct CounterFunctionAnalysis
 
   using BlockToLoops = std::map<BasicBlock *, std::vector<Loop *>>;
 
-  // In your header, change BoundsToLoops to key on the actual Value*
-  // instead of a string:
-  struct LoopBoundKey {
-    Value *initial;
-    Value *final_;   // this is your upper bound
-    Value *step;
-
-    bool operator<(const LoopBoundKey &o) const {
-      return std::tie(initial, final_, step)
-           < std::tie(o.initial, o.final_, o.step);
-    }
-  };
-
-  struct LoopBoundKeySCEV {
-    SCEV *start;
-    SCEV *step;   // this is your upper bound
-    SCEV *btc;
-
-    bool operator<(const LoopBoundKeySCEV &o) const {
-      return std::tie(start, step, btc)
-           < std::tie(o.start, o.step, o.btc);
-    }
-  };
-
-  using BoundsToLoops = std::map<LoopBoundKeySCEV, std::vector<Loop *>>;
-
-
-  //using BoundsToLoops = std::map<std::string, std::vector<Loop *>>;
+  using BoundsToLoops = std::map<const SCEV *, std::vector<Loop *>>;
 
   void createExpressionsForLoops(const BoundsToLoops &BoTL,
                                   std::map<std::string, std::string> &loop_bound_map,
