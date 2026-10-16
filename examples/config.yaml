@@ -1,10 +1,11 @@
 instructions_to_count:
 - mul
-# - div
 - add
 - sub
 - fmul
 - fdiv
+- udiv
+- sdiv
 - srem
 - urem
 - fadd
