@@ -110,7 +110,8 @@ ValueType ProtoTransform::typeToProto(const std::string &type, const std::string
 
   if (llvm::StringRef(inst).starts_with("fptosi") || llvm::StringRef(inst).starts_with("sitofp") ||
       llvm::StringRef(inst).starts_with("srem") ||
-      llvm::StringRef(inst).starts_with("sdiv") || llvm::StringRef(inst).starts_with("ashr")) {
+      llvm::StringRef(inst).starts_with("sdiv") || llvm::StringRef(inst).starts_with("ashr") ||
+      llvm::StringRef(inst).starts_with("llvm.smax.") || llvm::StringRef(inst).starts_with("llvm.smin.")) {
     if (elemType == "i8") return TYPE_INT8;
     if (elemType == "i16") return TYPE_INT16;
     if (elemType == "i32") return TYPE_INT32;
@@ -285,6 +286,17 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	}
 	if (llvm::StringRef(base).starts_with("llvm.bswap.")) {
 		return INST_BSWAP;
+	}
+	if (llvm::StringRef(base).starts_with("llvm.bitreverse.")) {
+		return INST_BREV;
+	}
+	if (llvm::StringRef(base).starts_with("llvm.smax.") || llvm::StringRef(base).starts_with("llvm.umax.") ||
+	    llvm::StringRef(base).starts_with("llvm.maxnum.")) {
+		return INST_MAX;
+	}
+	if (llvm::StringRef(base).starts_with("llvm.smin.") || llvm::StringRef(base).starts_with("llvm.umin.") ||
+	    llvm::StringRef(base).starts_with("llvm.minnum.")) {
+		return INST_MIN;
 	}
 	// Generic LLVM math intrinsics
 	static const std::pair<llvm::StringLiteral, Instruction> mathIntrinsics[] = {
