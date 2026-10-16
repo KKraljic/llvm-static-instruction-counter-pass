@@ -804,10 +804,12 @@ void CounterFunctionAnalysis::countInstructions(
 
       std::string configLookupName = opcode_name;
 
-      // double -> int is its own benchmark (INST_DOUBLE_TO_INT). The type part of the key is the
-      // integer result type, so the double source has to show up in the opcode part.
       if ((llvm::isa<llvm::FPToUIInst>(&inst) || llvm::isa<llvm::FPToSIInst>(&inst)) &&
           inst.getOperand(0)->getType()->isDoubleTy()) {
+        opcode_name += "_double";
+      }
+
+      if ((llvm::isa<llvm::UIToFPInst>(&inst) || llvm::isa<llvm::SIToFPInst>(&inst)) && inst.getType()->isDoubleTy()) {
         opcode_name += "_double";
       }
 

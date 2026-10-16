@@ -104,9 +104,18 @@ ValueType ProtoTransform::typeToProto(const std::string &type, const std::string
 		}
 	}
 
-  // LLVM integers carry no sign; fptosi results, srem, sdiv and ashr (benchmark_mod / benchmark_div / benchmark_shr
-  // on signed types) are measured under the signed types
-  if (llvm::StringRef(inst).starts_with("fptosi") || llvm::StringRef(inst).starts_with("srem") ||
+  // map i8/16 conversion to 32-bit
+  {
+    const llvm::StringRef instRef(inst);
+    if ((instRef.starts_with("fptosi") || instRef.starts_with("fptoui") || instRef.starts_with("sitofp") ||
+         instRef.starts_with("uitofp")) &&
+        (elemType == "i8" || elemType == "i16")) {
+      elemType = "i32";
+    }
+  }
+
+  if (llvm::StringRef(inst).starts_with("fptosi") || llvm::StringRef(inst).starts_with("sitofp") ||
+      llvm::StringRef(inst).starts_with("srem") ||
       llvm::StringRef(inst).starts_with("sdiv") || llvm::StringRef(inst).starts_with("ashr")) {
     if (elemType == "i8") return TYPE_INT8;
     if (elemType == "i16") return TYPE_INT16;
@@ -263,8 +272,14 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 	if (base == "fptoui_double" || base == "fptosi_double") {
 		return INST_DOUBLE_TO_INT;
 	}
-	// Bit-manipulation intrinsics (llvm.<op>.i<N>), typed by their operand type like the benchmarks
-	// sycl::clz lowers to __nv_clz / __nv_clzll on CUDA
+
+	if (base == "uitofp" || base == "sitofp") {
+		return INST_INT_TO_FLOAT;
+	}
+	if (base == "uitofp_double" || base == "sitofp_double") {
+		return INST_INT_TO_DOUBLE;
+	}
+
 	if (llvm::StringRef(base).starts_with("llvm.ctlz.") || base == "__nv_clz" || base == "__nv_clzll") {
 		return INST_CTLZ;
 	}
@@ -282,7 +297,6 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
 		{"llvm.fabs.", INST_ABS},
 		{"llvm.sqrt.", INST_SQRT},
 		{"llvm.pow.", INST_POW},
-		// log/exp are bounded by INST_LOG / INST_LOG_TEST and INST_EXP / INST_EXP_TEST
 		{"llvm.exp.", INST_EXP_REAL},
 		{"llvm.exp2.", INST_EXP2},
 		{"llvm.exp10.", INST_EXP10},
