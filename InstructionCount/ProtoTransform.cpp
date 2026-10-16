@@ -32,12 +32,6 @@ const llvm::StringMap<ValueType> ProtoTransform::InstTypeMap {
 	{"br",      TYPE_UINT32},
 };
 
-std::string capitalize(std::string s) {
-	if (!s.empty())
-		s[0] = std::toupper(static_cast<unsigned char>(s[0]));
-	return s;
-}
-
 const llvm::StringLiteral ProtoTransform::inlineAsmPrefix = "asm:";
 
 static llvm::StringRef inlineAsmMnemonic(llvm::StringRef inst) {
@@ -379,64 +373,9 @@ energy_estimation::Instruction ProtoTransform::instToProto(const std::string &k,
   return INST_ERR;
 }
 
-energy_estimation::Instruction ProtoTransform::instToProto(const InstKey &k) {
-  switch (k.opcode) {
-    case llvm::Instruction::Add:
-    case llvm::Instruction::FAdd:
-      return energy_estimation::INST_ADD;
-    case llvm::Instruction::Sub:
-    case llvm::Instruction::FSub:
-      return energy_estimation::INST_SUB;
-    case llvm::Instruction::Mul:
-    case llvm::Instruction::FMul:
-      return energy_estimation::INST_MUL;
-    case llvm::Instruction::Br:
-      return energy_estimation::INST_BR;
-    case llvm::Instruction::Store:
-      return energy_estimation::INST_STORE;
-    case llvm::Instruction::Load:
-      return energy_estimation::INST_LOAD;
-    case llvm::Instruction::Call:
-      return energy_estimation::INST_CALL;
-    case llvm::Instruction::Ret:
-      return energy_estimation::INST_RET;
-    case llvm::Instruction::FPToSI:
-      return energy_estimation::INST_FPTOSI;
-    case llvm::Instruction::Or:
-      return energy_estimation::INST_OR;
-    default:
-      return energy_estimation::INST_ERR;
-  }
-}
-
 std::string ProtoTransform::typeStr(llvm::Type *type) {
   std::string s;
   llvm::raw_string_ostream rso(s);
   type->print(rso);
   return rso.str();
-}
-
-std::string instName(const InstKey &k) {
-	std::string name = llvm::Instruction::getOpcodeName(k.opcode);
-
-	// ICMP predicate handling
-	if (k.opcode == llvm::Instruction::ICmp) {
-		auto pred = static_cast<llvm::ICmpInst::Predicate>(k.subcode);
-		name += llvm::ICmpInst::getPredicateName(pred).str();
-	}
-
-	if (!name.empty() && (name[0] == 'f' || name[0] == 'F')) {
-
-		// only strip if it matches known FP ops
-		std::string lower = name;
-		lower[0] = std::tolower(lower[0]);
-
-		if (lower.rfind("fadd", 0) == 0) name = name.substr(1);
-		else if (lower.rfind("fsub", 0) == 0) name = name.substr(1);
-		else if (lower.rfind("fmul", 0) == 0) name = name.substr(1);
-		else if (lower.rfind("fdiv", 0) == 0) name = name.substr(1);
-		else if (lower.rfind("frem", 0) == 0) name = name.substr(1);
-	}
-
-	return capitalize(name);
 }

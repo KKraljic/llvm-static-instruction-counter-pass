@@ -12,16 +12,6 @@
 
 #include <string>
 
-struct InstKey {
-  unsigned opcode;
-  unsigned subcode;
-
-  bool operator<(const InstKey& other) const {
-    return std::tie(opcode, subcode) <
-           std::tie(other.opcode, other.subcode);
-  }
-};
-
 class ProtoTransform {
 public:
   static const llvm::StringLiteral inlineAsmPrefix;
@@ -30,11 +20,9 @@ public:
   static energy_estimation::ValueType typeToProto(llvm::Type* type);
   static std::string typeToString(llvm::Type* type);
   static energy_estimation::Instruction instToProto(const std::string &k, bool &isUniform);
-  static energy_estimation::Instruction instToProto(const InstKey &k);
 private:
 	static const llvm::StringMap<energy_estimation::ValueType> InstTypeMap;
   static std::string typeStr(llvm::Type *type);
-	std::string instName(const InstKey &k);
 };
 
 // Opcode name for a call to one-statement inline asm (fp16 ops are only inline asm)
